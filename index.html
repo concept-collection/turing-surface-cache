@@ -101,7 +101,12 @@
         <a href="https://github.com/concept-collection/turing-surface">turing-surface</a>'s
         spectral solver). Drag to rotate.
       </p>
-      <div class="controls" id="params"></div>
+      <div class="controls">
+        <label title="The reaction-diffusion system being solved">model
+          <select id="model"></select>
+        </label>
+        <span id="params" class="controls" style="padding: 0"></span>
+      </div>
       <div class="controls">
         <label title="The surface the pattern is solved on">geometry
           <select id="geometry"></select>

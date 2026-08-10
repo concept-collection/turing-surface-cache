@@ -243,6 +243,43 @@ print('h5py check ok; species', list(f.attrs['species']), '; adapter:', f.attrs.
     problems.push(`warm: odd file name: ${warmFile}`);
   }
   await page3.close();
+
+  // ---- pass 5: model in the URL, and a live model switch -------------------
+  // Allen–Cahn arrives via the fragment (one species -> one panel); switching
+  // to Brusselator recompiles the session and rebuilds the panels (two).
+  // Nothing computes: both settle on the idle miss status.
+  const page4 = await browser.newPage();
+  watch(page4, 'model:');
+  await interceptCache(page4, null, '');
+  await openAndSelect(page4, null, '#model=allencahn');
+  await page4.waitForFunction(
+    () => /press Compute solution|failed/.test(
+      document.getElementById('status')?.textContent ?? '') ||
+      (document.getElementById('err')?.textContent?.length ?? 0) > 4,
+    { timeout: 600_000 },
+  );
+  const modelRestored = await page4.$eval('#model', (el) => el.value);
+  if (modelRestored !== 'allencahn') {
+    problems.push(`model: URL restore failed, model = ${modelRestored}`);
+  }
+  const acPanels = await page4.$$eval('.sphere-box canvas', (els) => els.length);
+  if (acPanels !== 1) problems.push(`model: allencahn should have 1 panel, got ${acPanels}`);
+  await page4.select('#model', 'brusselator');
+  // The old idle status is still on screen while the recompile runs, so the
+  // wait must demand the new panel count as well.
+  await page4.waitForFunction(
+    () => (document.querySelectorAll('.sphere-box canvas').length === 2 &&
+      /press Compute solution/.test(document.getElementById('status')?.textContent ?? '')) ||
+      /failed/.test(document.getElementById('status')?.textContent ?? '') ||
+      (document.getElementById('err')?.textContent?.length ?? 0) > 4,
+    { timeout: 600_000 },
+  );
+  const brPanels = await page4.$$eval('.sphere-box canvas', (els) => els.length);
+  if (brPanels !== 2) problems.push(`model: brusselator should have 2 panels, got ${brPanels}`);
+  const e4 = await errOf(page4);
+  if (e4) problems.push(`model: err: ${e4}`);
+  console.log(`pass 5: allencahn ${acPanels} panel, brusselator ${brPanels} panels`);
+  await page4.close();
 } catch (e) {
   problems.push(`fatal: ${e.message}`);
 } finally {

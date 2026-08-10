@@ -7,15 +7,20 @@
  * declares nothing about these — it just names the parameters it wants, and
  * `CompiledModel` matches each against this table.
  *
- * Trimmed from turing-surface: this app ships one model (Schnakenberg, flux
- * form). The discrete parameter choices the app actually offers live in
- * src/cache/options.ts; the min/max/step here are only the numeric bounds.
+ * Trimmed from turing-surface: the three flux-form models ship (Schnakenberg,
+ * Brusselator, Allen-Cahn); the 12-transform Algorithm-4 reference does not,
+ * since it solves the same equations as Schnakenberg and would only duplicate
+ * cache entries under different hashes. The discrete parameter choices the
+ * app actually offers live in src/cache/options.ts; the min/max/step here are
+ * only the numeric bounds.
  *
  * Naming convention, documented in each .m:
  *   `u`, `v`, ...  grid fields the model computes and the app renders
  *   `U`, `V`, ...  the corresponding spectral state (uppercase)
  */
 import schnakenbergSource from '../../models/schnakenberg.m?raw';
+import brusselatorSource from '../../models/brusselator.m?raw';
+import allencahnSource from '../../models/allencahn.m?raw';
 
 export type Params = Record<string, number>;
 
@@ -74,7 +79,40 @@ const schnakenberg: MModel = {
   source: schnakenbergSource,
 };
 
-export const mModels: MModel[] = [schnakenberg];
+const brusselator: MModel = {
+  key: 'brusselator',
+  label: 'Brusselator',
+  blurb: 'Turing stripes and spots.',
+  species: ['u', 'v'],
+  state: stateFor(['u', 'v']),
+  params: [
+    { key: 'A', label: 'A', value: 3, min: 0.5, max: 6, step: 0.1 },
+    { key: 'B', label: 'B', value: 9, min: 1, max: 15, step: 0.25 },
+    { key: 'D1', label: 'D₁', value: 3.33e-3, min: 1e-4, max: 2e-2, step: 1e-4 },
+    { key: 'D2', label: 'D₂', value: 1.67e-2, min: 1e-3, max: 1e-1, step: 1e-3 },
+    { key: 'dt', label: 'dt', value: 0.02, min: 0.002, max: 0.1, step: 0.002 },
+  ],
+  pdeg: 3,
+  seedAmp: 1e-2,
+  source: brusselatorSource,
+};
+
+const allencahn: MModel = {
+  key: 'allencahn',
+  label: 'Allen–Cahn',
+  blurb: 'One species: interfaces form, then coarsen.',
+  species: ['u'],
+  state: stateFor(['u']),
+  params: [
+    { key: 'eps2', label: 'ε²', value: 1e-3, min: 1e-4, max: 1e-2, step: 1e-4 },
+    { key: 'dt', label: 'dt', value: 0.02, min: 0.002, max: 0.2, step: 0.002 },
+  ],
+  pdeg: 3,
+  seedAmp: 1e-2,
+  source: allencahnSource,
+};
+
+export const mModels: MModel[] = [schnakenberg, brusselator, allencahn];
 
 export const mModelByKey = (key: string): MModel | undefined =>
   mModels.find((m) => m.key === key);

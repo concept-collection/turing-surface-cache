@@ -22,14 +22,30 @@ export interface DiscreteChoice {
   value: number;
 }
 
-/** Model parameter choices (Schnakenberg). */
-export const MODEL_CHOICES: DiscreteChoice[] = [
-  { key: 'a', label: 'a', values: [0.05, 0.1, 0.15, 0.2], value: 0.1 },
-  { key: 'b', label: 'b', values: [0.7, 0.9, 1.1, 1.3], value: 0.9 },
-  { key: 'D1', label: 'D₁', values: [1.6e-4, 4e-4, 1e-3], value: 4e-4 },
-  { key: 'D2', label: 'D₂', values: [3.2e-3, 8e-3, 2e-2], value: 8e-3 },
-  { key: 'dt', label: 'dt', values: [0.02, 0.05, 0.1], value: 0.05 },
-];
+/** The model offered first, and what Reset returns to. */
+export const DEFAULT_MODEL_KEY = 'schnakenberg';
+
+/** Model parameter choices, by model key. Every dt divides every end time. */
+export const MODEL_CHOICES: Record<string, DiscreteChoice[]> = {
+  schnakenberg: [
+    { key: 'a', label: 'a', values: [0.05, 0.1, 0.15, 0.2], value: 0.1 },
+    { key: 'b', label: 'b', values: [0.7, 0.9, 1.1, 1.3], value: 0.9 },
+    { key: 'D1', label: 'D₁', values: [1.6e-4, 4e-4, 1e-3], value: 4e-4 },
+    { key: 'D2', label: 'D₂', values: [3.2e-3, 8e-3, 2e-2], value: 8e-3 },
+    { key: 'dt', label: 'dt', values: [0.02, 0.05, 0.1], value: 0.05 },
+  ],
+  brusselator: [
+    { key: 'A', label: 'A', values: [2, 3, 4], value: 3 },
+    { key: 'B', label: 'B', values: [7, 9, 11], value: 9 },
+    { key: 'D1', label: 'D₁', values: [1.7e-3, 3.33e-3, 6.7e-3], value: 3.33e-3 },
+    { key: 'D2', label: 'D₂', values: [8.3e-3, 1.67e-2, 3.3e-2], value: 1.67e-2 },
+    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.02 },
+  ],
+  allencahn: [
+    { key: 'eps2', label: 'ε²', values: [5e-4, 1e-3, 2e-3], value: 1e-3 },
+    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.02 },
+  ],
+};
 
 /** Geometry parameter choices, by geometry key. The sphere has none. */
 export const GEOMETRY_CHOICES: Record<string, DiscreteChoice[]> = {

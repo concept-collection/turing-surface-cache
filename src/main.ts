@@ -19,7 +19,7 @@
  */
 import { requestShtDevice, describeAdapter } from './sht/sht.ts';
 import { ModelSession } from './mgpu/session.ts';
-import { mModels, type MModel, type Params } from './mgpu/registry.ts';
+import { mModels, mModelByKey, type MModel, type Params } from './mgpu/registry.ts';
 import { formatFailure } from './mgpu/errors.ts';
 import {
   mGeometryByKey,
@@ -39,6 +39,7 @@ import { Colorbar, floorRange } from './render/colorbar.ts';
 import { colormaps } from './render/colormaps.ts';
 import {
   MODEL_CHOICES,
+  DEFAULT_MODEL_KEY,
   GEOMETRY_CHOICES,
   SEED_CHOICE,
   T_END_CHOICE,
@@ -56,6 +57,7 @@ import { encodeCacheFile, decodeCacheFile, type DecodedCacheFile } from './cache
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
 
+const elModel = $<HTMLSelectElement>('model');
 const elParams = $('params');
 const elGeometry = $<HTMLSelectElement>('geometry');
 const elGeomParams = $('geomparams');
@@ -109,7 +111,7 @@ const CHUNK_STEPS = 32;
 const RENDER_EVERY_MS = 250;
 
 // ---------------------------------------------------------------- state
-const model: MModel = mModels[0];
+let model: MModel = mModelByKey(DEFAULT_MODEL_KEY)!;
 let device: GPUDevice | null = null;
 let session: ModelSession | null = null;
 let adapterName = '';
@@ -118,7 +120,7 @@ let adapterName = '';
 let stepsPerSubmit = 4;
 
 /** The discrete selections, always exactly values from options.ts. */
-let params: Params = Object.fromEntries(MODEL_CHOICES.map((c) => [c.key, c.value]));
+let params: Params = defaultChoiceParams(MODEL_CHOICES[DEFAULT_MODEL_KEY]);
 let geometry: MGeometry = mGeometryByKey(DEFAULT_GEOMETRY_KEY)!;
 let geomParams: Params = Object.fromEntries(
   GEOMETRY_CHOICES[DEFAULT_GEOMETRY_KEY].map((c) => [c.key, c.value]),
@@ -131,8 +133,11 @@ let tEnd = T_END_CHOICE.value;
 // cached solution). Read once at startup; rewritten on every change.
 readUrlState();
 
-/** What the session currently has applied (params are cheap; geometry is a
- *  rebuild of the surface and the mesh, so it is compared before applying). */
+/** What the session currently has applied. Params are cheap (uniforms); a
+ *  geometry change re-evaluates the surface and rebuilds the mesh; a model
+ *  change recompiles the whole session, since the model is compiled into the
+ *  GPU step. */
+let sessionModelKey = '';
 let sessionGeomKey = '';
 let sessionGeomParams: Params = {};
 
@@ -199,12 +204,17 @@ function readUrlState(): void {
     const v = Number(raw);
     return choice.values.includes(v) ? v : current;
   };
+  const m = p.get('model');
+  if (m && mModelByKey(m) && MODEL_CHOICES[m]) {
+    model = mModelByKey(m)!;
+    params = defaultChoiceParams(MODEL_CHOICES[m]);
+  }
   const g = p.get('geometry');
   if (g && mGeometryByKey(g) && GEOMETRY_CHOICES[g]) {
     geometry = mGeometryByKey(g)!;
     geomParams = defaultChoiceParams(GEOMETRY_CHOICES[g]);
   }
-  for (const c of MODEL_CHOICES) params[c.key] = pick(c, params[c.key]);
+  for (const c of MODEL_CHOICES[model.key]) params[c.key] = pick(c, params[c.key]);
   for (const c of GEOMETRY_CHOICES[geometry.key]) geomParams[c.key] = pick(c, geomParams[c.key]);
   seed = pick(SEED_CHOICE, seed);
   tEnd = pick(T_END_CHOICE, tEnd, 'tend');
@@ -212,7 +222,8 @@ function readUrlState(): void {
 
 function writeUrlState(): void {
   const p = new URLSearchParams();
-  for (const c of MODEL_CHOICES) p.set(c.key, fmtChoice(params[c.key]));
+  p.set('model', model.key);
+  for (const c of MODEL_CHOICES[model.key]) p.set(c.key, fmtChoice(params[c.key]));
   p.set('geometry', geometry.key);
   for (const c of GEOMETRY_CHOICES[geometry.key]) p.set(c.key, fmtChoice(geomParams[c.key]));
   p.set('seed', String(seed));
@@ -257,8 +268,11 @@ function makeSelect(
 
 /** Put every selection back to its default and refresh. */
 function resetDefaults(): void {
-  params = defaultChoiceParams(MODEL_CHOICES);
+  model = mModelByKey(DEFAULT_MODEL_KEY)!;
+  params = defaultChoiceParams(MODEL_CHOICES[DEFAULT_MODEL_KEY]);
   geometry = mGeometryByKey(DEFAULT_GEOMETRY_KEY)!;
+  elModel.value = model.key;
+  buildModelParamControls();
   geomParams = defaultChoiceParams(GEOMETRY_CHOICES[DEFAULT_GEOMETRY_KEY]);
   seed = SEED_CHOICE.value;
   tEnd = T_END_CHOICE.value;
@@ -270,12 +284,30 @@ function resetDefaults(): void {
   onSelectionChange();
 }
 
-function buildControls(): void {
-  for (const choice of MODEL_CHOICES) {
+function buildModelParamControls(): void {
+  elParams.replaceChildren();
+  for (const choice of MODEL_CHOICES[model.key]) {
     elParams.append(
       makeSelect(choice, () => params[choice.key], (v) => (params[choice.key] = v)),
     );
   }
+}
+
+function buildControls(): void {
+  for (const m of mModels) {
+    const opt = document.createElement('option');
+    opt.value = m.key;
+    opt.textContent = m.label;
+    elModel.append(opt);
+  }
+  elModel.value = model.key;
+  elModel.addEventListener('change', () => {
+    model = mModelByKey(elModel.value)!;
+    params = defaultChoiceParams(MODEL_CHOICES[model.key]);
+    buildModelParamControls();
+    onSelectionChange();
+  });
+  buildModelParamControls();
   for (const g of mGeometries) {
     const opt = document.createElement('option');
     opt.value = g.key;
@@ -539,11 +571,65 @@ function offerDownload(bytes: Uint8Array, name: string): void {
 }
 
 // ---------------------------------------------------------------- solving
-/** Apply the current selection to the (one, reused) session: params are a
- *  uniform upload; a geometry change re-evaluates the surface and rebuilds
- *  the mesh, keeping the camera. */
+/** Rebuild the mesh and panels from the session's current surface, keeping
+ *  the camera. Fresh buffers render black until the first fill, so the bare
+ *  surface is shown; the caller's draw or clearDisplay follows right behind. */
+async function rebuildViewFromSession(): Promise<void> {
+  if (!session) return;
+  const surface = await session.renderPositions();
+  const cam = scenes[0]?.cameraState();
+  disposeView();
+  buildView(surface);
+  if (cam) for (const s of scenes) s.setCameraState(cam);
+  clearDisplay();
+}
+
+/**
+ * Compile a full session for the spec's model. The model is the one
+ * selection that cannot be swapped into a running session — its step is
+ * compiled into the GPU pipelines — so changing it pays a recompile
+ * (a second or two on a real GPU). The panel count follows the model's
+ * species (Allen–Cahn has one), so the view is rebuilt too.
+ */
+async function rebuildSession(spec: CacheSpec): Promise<void> {
+  if (!device) throw new Error('no GPU device');
+  const nextModel = mModelByKey(spec.model)!;
+  const geomModel = mGeometryByKey(spec.geometry)!;
+  session?.destroy();
+  session = null;
+  sessionModelKey = '';
+  status(`compiling ${nextModel.label}…`);
+  session = await ModelSession.create({
+    device,
+    model: nextModel,
+    params: spec.params,
+    lmax: spec.lmax,
+    oversample: OVERSAMPLE,
+    geometry: geomModel,
+    geometryParams: spec.geometryParams,
+    niter: spec.niter,
+    lam3: spec.lam3,
+  });
+  model = nextModel;
+  sessionModelKey = spec.model;
+  sessionGeomKey = spec.geometry;
+  sessionGeomParams = { ...spec.geometryParams };
+  // Never put more dispatches in one submission than the budget allows,
+  // however expensive this model's step is.
+  const opsPerStep = Math.max(1, session.describe().step.length);
+  stepsPerSubmit = Math.max(1, Math.floor(DISPATCH_BUDGET / opsPerStep));
+  await rebuildViewFromSession();
+  updateStats();
+}
+
+/** Apply the current selection to the session: params are a uniform upload;
+ *  a geometry change re-evaluates the surface and rebuilds the mesh; a model
+ *  change recompiles the session entirely. */
 async function applySelection(spec: CacheSpec): Promise<void> {
-  if (!session) throw new Error('no session');
+  if (!session || spec.model !== sessionModelKey) {
+    await rebuildSession(spec);
+    return;
+  }
   session.setParams(spec.params);
   const geomChanged =
     spec.geometry !== sessionGeomKey ||
@@ -553,14 +639,7 @@ async function applySelection(spec: CacheSpec): Promise<void> {
   await session.setGeometry(geomModel, spec.geometryParams);
   sessionGeomKey = spec.geometry;
   sessionGeomParams = { ...spec.geometryParams };
-  const surface = await session.renderPositions();
-  const cam = scenes[0]?.cameraState();
-  disposeView();
-  buildView(surface);
-  if (cam) for (const s of scenes) s.setCameraState(cam);
-  // Fresh buffers render black until the first fill; show the bare surface
-  // instead. The caller's draw or clearDisplay follows right behind.
-  clearDisplay();
+  await rebuildViewFromSession();
 }
 
 /** Decode a fetched cache file and put it on screen. */
@@ -596,7 +675,11 @@ async function displayCached(
  * running (the run is not disturbed — only the cache note follows).
  */
 async function refresh(): Promise<void> {
-  if (!session || busy) {
+  // Before the GPU is up there is nothing to refresh; while a computation
+  // runs the note follows the dropdowns and the refresh waits its turn. A
+  // missing session is NOT a reason to bail: applySelection rebuilds it,
+  // which is also what recovers from a failed compile.
+  if (!device || busy) {
     void updateCacheNote();
     return;
   }
@@ -641,7 +724,7 @@ async function refresh(): Promise<void> {
 
 /** The Compute solution button: cache lookup, then either load or compute. */
 async function solve(): Promise<void> {
-  if (!session || busy) return;
+  if (!device || busy) return;
   generation++;
   const gen = generation;
   setBusy(true);
@@ -958,36 +1041,13 @@ async function boot(): Promise<void> {
     }
   });
 
-  status('compiling the solver…');
   try {
-    session = await ModelSession.create({
-      device,
-      model,
-      params,
-      lmax: LMAX,
-      oversample: OVERSAMPLE,
-      geometry,
-      geometryParams: geomParams,
-      niter: NITER,
-      lam3: LAM3,
-    });
+    await rebuildSession(currentSpec());
   } catch (e) {
     elErr.textContent = formatFailure(e, model.source);
     status('failed to compile.');
     return;
   }
-  sessionGeomKey = geometry.key;
-  sessionGeomParams = { ...geomParams };
-
-  // Never put more dispatches in one submission than the budget allows,
-  // however expensive niter has made one step.
-  const opsPerStep = Math.max(1, session.describe().step.length);
-  stepsPerSubmit = Math.max(1, Math.floor(DISPATCH_BUDGET / opsPerStep));
-
-  const surface = await session.renderPositions();
-  buildView(surface);
-  clearDisplay();
-  updateStats();
   // Bring up the default selection if it is cached; otherwise show empty
   // surfaces. Nothing is ever computed without pressing the button.
   flowChain = flowChain.then(() => refresh()).catch(() => undefined);

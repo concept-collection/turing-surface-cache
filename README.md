@@ -19,20 +19,26 @@ rather than a minute.
 
 ## The discrete parameter space
 
-One model ships (Schnakenberg, in turing-surface's 6-transform flux form) on
-three geometries (sphere, ellipsoid, peanut). The choices, defined in
+Three models ship, all in turing-surface's 6-transform flux form —
+Schnakenberg (the default), Brusselator, and Allen–Cahn — on three geometries
+(sphere, ellipsoid, peanut). The Algorithm-4 reference variant is deliberately
+absent: it solves the same equations as Schnakenberg and would only duplicate
+cache entries under different hashes. The choices, defined in
 [`src/cache/options.ts`](src/cache/options.ts):
 
 | setting | choices |
 |---|---|
-| a | 0.05, **0.1**, 0.15, 0.2 |
-| b | 0.7, **0.9**, 1.1, 1.3 |
-| D₁ | 1.6e-4, **4e-4**, 1e-3 |
-| D₂ | 3.2e-3, **8e-3**, 2e-2 |
-| dt | 0.02, **0.05**, 0.1 |
+| Schnakenberg | a: 0.05/**0.1**/0.15/0.2 · b: 0.7/**0.9**/1.1/1.3 · D₁: 1.6e-4/**4e-4**/1e-3 · D₂: 3.2e-3/**8e-3**/2e-2 · dt: 0.02/**0.05**/0.1 |
+| Brusselator | A: 2/**3**/4 · B: 7/**9**/11 · D₁: 1.7e-3/**3.33e-3**/6.7e-3 · D₂: 8.3e-3/**1.67e-2**/3.3e-2 · dt: 0.01/**0.02**/0.05 |
+| Allen–Cahn | ε²: 5e-4/**1e-3**/2e-3 · dt: 0.01/**0.02**/0.05 |
 | geometry | sphere, **ellipsoid** (axes each 0.6/1/1.5), peanut (waist 0.4/0.6/0.8, stretch 0/0.6/1.2) |
 | seed | **1**–5 |
 | end time | **100**, 200, 400, 800, 1600 |
+
+The model, unlike every other choice, is compiled into the GPU session, so
+switching it pays a recompile of a second or two; everything else swaps into
+the running session. Allen–Cahn evolves one species, so it shows one panel
+where the others show two.
 
 (Defaults in bold.) The numerical-scheme settings are fixed — lmax 63, 8
 solve iterations, seed wavelength λ = 0.5 — but are recorded in every cache
