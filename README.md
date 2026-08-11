@@ -180,6 +180,22 @@ names its adapter on startup, reports its rate in steps per second, and says
 so plainly when either looks wrong; it does not refuse to run, since the
 judgment is the operator's.
 
+A machine can also be too old for the command in a way that has nothing to do
+with its GPU. Dawn's prebuilt binary wants glibc 2.34, which a long-lived
+Linux workstation may well not have — Rocky and RHEL 8 are on 2.28 — and the
+obvious remedy of running the command in a container turns out not to work:
+inside one the NVIDIA driver declines to bring up its Vulkan driver
+(`vk_icdNegotiateLoaderICDInterfaceVersion` returns
+`VK_ERROR_INITIALIZATION_FAILED`), while the same call on the host succeeds.
+What does work is to borrow only the userland from a container image and run
+node through its loader, on the host, leaving the GPU, `/dev` and `/proc`
+exactly as they were; the host's own `/usr/lib64` stays last on the library
+path, since the NVIDIA libraries and the Vulkan loader have to match the
+running kernel module. The page carries that recipe, folded away beside the
+command it belongs to, along with what the other common failures mean —
+they are worth writing down where someone will meet them, since none of them
+is guessable from the error alone.
+
 Progress is a line per target and a rate that updates in place:
 
 ```

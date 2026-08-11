@@ -96,6 +96,19 @@
         overflow-x: auto; white-space: nowrap;
       }
       #clicopied { color: var(--ok); }
+      /* Troubleshooting, folded away: the failures below are undiscoverable
+         from the error alone, and the page is where people start. */
+      #clihelp { margin-top: 4px; font-size: 12.5px; }
+      #clihelp[hidden] { display: none; }
+      #clihelp summary { cursor: pointer; color: var(--accent); width: fit-content; }
+      #clihelp p { margin: 8px 0; max-width: 68ch; }
+      #clihelp code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #clihelp pre {
+        font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--sphere-bg); border: 1px solid var(--line);
+        border-radius: 6px; padding: 8px 10px; overflow-x: auto;
+        color: var(--ink);
+      }
       #err { color: #b35900; white-space: pre-wrap; font-size: 13px; }
     </style>
   </head>
@@ -166,6 +179,58 @@
             title="Copies the command with your key in it. The key is masked here so that it stays out of screenshots.">Copy command (includes your key)</button>
           <span id="clicopied"></span>
         </div>
+        <details id="clihelp" hidden>
+          <summary>if that command does not run on the other machine</summary>
+          <p><code>Unexpected token {</code>, or another syntax error, means that
+            machine's node is too old to read the program at all: node 18 or newer
+            is needed. nodejs.org has current builds, and nvm, fnm and asdf install
+            one per user without touching what the system depends on; where a
+            cluster uses environment modules, <code>module load node</code> may be
+            all it takes.</p>
+          <p><code>the webgpu package is installed but did not load … GLIBC_2.34
+            not found</code> means the machine's distribution is older than the
+            prebuilt Dawn binary — ordinary on a long-lived Linux workstation, since
+            Rocky and RHEL 8 have glibc 2.28 and Dawn wants 2.34. Running the
+            command inside a container is the obvious answer and the wrong one:
+            there the NVIDIA driver declines to bring up its Vulkan driver, while
+            on the host it comes up fine. What does work is borrowing a newer
+            userland from a container image and running node through <em>that</em>
+            loader, still on the host, so the GPU, <code>/dev</code> and
+            <code>/proc</code> are exactly what they were:</p>
+          <pre># 1. borrow a userland — podman or docker unpacks it; nothing runs inside it
+mkdir -p ~/turing-userland
+podman create --name u docker.io/library/node:22-bookworm-slim true
+podman export u | tar -x -C ~/turing-userland
+podman rm u
+
+# 2. a node that uses it, running on the host rather than in a container
+U=~/turing-userland; mkdir -p ~/turing-bin
+printf '#!/bin/sh\nexec %s --library-path %s %s "$@"\n' \
+  $U/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 \
+  $U/usr/lib/x86_64-linux-gnu:$U/lib/x86_64-linux-gnu:/usr/lib64 \
+  $U/usr/local/bin/node > ~/turing-bin/node
+chmod +x ~/turing-bin/node
+
+# 3. run the command above, with that node found first
+export PATH=~/turing-bin:$PATH</pre>
+          <p>The host's own <code>/usr/lib64</code> stays last on that library
+            path, and is where the NVIDIA libraries and the Vulkan loader come
+            from: those have to match the running kernel module, so they must be
+            the machine's own. If podman's storage lives on NFS it will fail to
+            unpack the image, which
+            <code>--root /tmp/$USER/store --runroot /tmp/$USER/run</code> on each
+            podman command works around.</p>
+          <p><code>WebGPU is not available</code>, or no adapter at all, means
+            there is no GPU to reach: Dawn goes through Vulkan on Linux and Metal
+            on macOS, so a machine without a GPU, or with one whose driver is not
+            installed, has nothing to offer.
+            <code>DAWN_FLAGS='backend=vulkan'</code> makes it say more about why.</p>
+          <p>A rate of a few steps per second rather than a few hundred means a
+            software rasterizer has stood in for the GPU. The command names its
+            adapter on the first line and says so when it notices, but it does not
+            refuse to run — a slow contribution is still a contribution, if that is
+            what you meant.</p>
+        </details>
       </div>
       <p id="err"></p>
     </main>

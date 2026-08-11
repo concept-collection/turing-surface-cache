@@ -86,6 +86,7 @@ const elCliBar = $('clibar');
 const elCliCmd = $('clicmd');
 const elCliCopy = $<HTMLButtonElement>('clicopy');
 const elCliCopied = $('clicopied');
+const elCliHelp = $('clihelp');
 const elErr = $('err');
 
 /**
@@ -1041,6 +1042,7 @@ function updateUploadNote(): void {
   // and so is the command that does the same thing elsewhere.
   elAutoBar.hidden = !hasKey;
   elCliBar.hidden = !hasKey;
+  elCliHelp.hidden = !hasKey;
   elCliCmd.textContent = fillCommand('…');
   elCliCopied.textContent = '';
   if (!hasKey && autoRunning) autoRunning = false;
