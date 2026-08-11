@@ -9,12 +9,16 @@
   "license": "CECILL-2.1",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build && npm run build:cli",
+    "build:cli": "vite build --config vite.cli.config.ts && node scripts/pack-cli.mjs"
   },
   "dependencies": {
     "h5wasm": "^0.10.3",
     "numbl": "file:../../numbl",
     "three": "^0.183.0"
+  },
+  "optionalDependencies": {
+    "webgpu": "^0.4.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

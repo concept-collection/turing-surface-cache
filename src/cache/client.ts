@@ -10,7 +10,7 @@
  * receive a presigned R2 PUT URL, and upload directly. Only holders of the
  * key can write; everyone can read.
  */
-import { cacheFileName, canonicalJson, type CacheSpec } from './spec.ts';
+import { APP_NAME, FORMAT_VERSION, cacheFileName, canonicalJson, type CacheSpec } from './spec.ts';
 
 const PUBLIC_BASE = 'https://tempory.net/tmpbucket/';
 const WORKER_BASE = 'https://tmpbucket.figurl.workers.dev';
@@ -57,13 +57,9 @@ export async function isCached(lookup: CacheLookup): Promise<boolean> {
   return (await headCached(lookup)) === true;
 }
 
-/** Upload one cache file. Resolves to its public URL. */
-export async function uploadCacheFile(
-  apiKey: string,
-  fileName: string,
-  bytes: Uint8Array,
-): Promise<string> {
-  const res = await fetch(`${WORKER_BASE}/api/upload-url`, {
+/** Ask the Worker for a presigned PUT. Nothing is written until it is used. */
+function requestUploadUrl(apiKey: string, fileName: string): Promise<Response> {
+  return fetch(`${WORKER_BASE}/api/upload-url`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -71,6 +67,28 @@ export async function uploadCacheFile(
     },
     body: JSON.stringify({ fileName, contentType: CONTENT_TYPE }),
   });
+}
+
+/**
+ * Would this key be allowed to upload? Asking for a grant and not using it
+ * writes nothing, and answers in one request — worth doing when a key is
+ * entered, since the alternative is finding out after the first run.
+ * Throws if the Worker cannot be reached at all, which is not the key's fault.
+ */
+export async function verifyApiKey(apiKey: string): Promise<boolean> {
+  const res = await requestUploadUrl(apiKey, `${APP_NAME}/v${FORMAT_VERSION}/.keycheck`);
+  if (res.status === 401 || res.status === 403) return false;
+  if (!res.ok) throw new Error(`upload-url request failed: HTTP ${res.status}`);
+  return true;
+}
+
+/** Upload one cache file. Resolves to its public URL. */
+export async function uploadCacheFile(
+  apiKey: string,
+  fileName: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const res = await requestUploadUrl(apiKey, fileName);
   if (res.status === 401 || res.status === 403) {
     throw new Error('upload not authorized — check the API key');
   }

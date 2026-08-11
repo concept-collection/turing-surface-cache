@@ -71,7 +71,13 @@ interface EmFS {
 let scratchCounter = 0;
 
 async function withH5<T>(fn: (h5: H5Module, fs: EmFS) => T | Promise<T>): Promise<T> {
-  const h5 = (await import('h5wasm')) as unknown as H5Module;
+  // Two builds of the same library: the browser one carries the wasm inside
+  // the bundle, the node one reads it off disk. __NODE_BUILD__ is a build-time
+  // constant (see vite.config.ts and vite.cli.config.ts), so whichever branch
+  // this build is not takes no part in it.
+  const h5 = (await (__NODE_BUILD__
+    ? import('h5wasm/node')
+    : import('h5wasm'))) as unknown as H5Module;
   const { FS } = (await h5.ready) as { FS: EmFS };
   return fn(h5, FS);
 }

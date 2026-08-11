@@ -26,9 +26,15 @@ import {
   DEFAULT_MODEL_KEY,
   GEOMETRY_CHOICES,
   AUTO_DT,
+  AUTO_SEED,
+  T_END_CHOICE,
+  LMAX,
+  NITER,
+  LAM3,
   type DiscreteChoice,
 } from './options.ts';
 import { DEFAULT_GEOMETRY_KEY } from '../geom/registry.ts';
+import { APP_NAME, FORMAT_VERSION, type CacheSpec } from './spec.ts';
 
 export interface AutoTarget {
   model: string;
@@ -106,6 +112,28 @@ export function enumerateTargets(): AutoTarget[] {
     }
   }
   return out;
+}
+
+/**
+ * The solution a target names. The seed is the pinned one, and the end time is
+ * the longest listed: a run reaching it passes through every shorter one and
+ * contributes those on the way, so one run fills the whole chain. The page
+ * sets its dropdowns from this rather than deciding the same thing twice.
+ */
+export function specForTarget(target: AutoTarget): CacheSpec {
+  return {
+    app: APP_NAME,
+    formatVersion: FORMAT_VERSION,
+    model: target.model,
+    params: { ...target.params },
+    geometry: target.geometry,
+    geometryParams: { ...target.geometryParams },
+    lmax: LMAX,
+    niter: NITER,
+    lam3: LAM3,
+    seed: AUTO_SEED,
+    tEnd: Math.max(...T_END_CHOICE.values),
+  };
 }
 
 /**

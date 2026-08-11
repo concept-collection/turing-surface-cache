@@ -127,6 +127,54 @@ Worker: the client presents the API key and a file name, receives a presigned
 R2 PUT URL, and uploads directly. Only holders of the key can write; everyone
 can read. The key is entered in the page and kept in localStorage.
 
+## Filling it from the command line
+
+A browser window is a poor place to leave a long computation, so the same walk
+runs outside one:
+
+```
+TURING_SURFACE_CACHE_KEY=… npx https://concept-collection.github.io/turing-surface-cache/fill.tgz
+```
+
+Nothing is published to the npm registry — npm installs a tarball from a URL
+as happily as from a package name, and the tarball is built and deployed
+beside the page, so the command line is always the same commit as the app.
+The page itself offers this command, ready to copy, once an upload key is
+entered. The key can also be saved for later runs (`login` prompts for it and
+writes `~/.config/turing-surface-cache/key`), or passed as `--key`, though the
+environment is preferable: a key on the command line is visible to every user
+on the machine through `ps`, while another process's environment is not.
+
+The walk, the runs and the uploads are the page's own — the same modules under
+[`src/cache/`](src/cache/), driven by console output instead of a status bar
+(see [`src/cli/fill.ts`](src/cli/fill.ts)). What differs is the WebGPU: node
+has none, so the command line brings its own, the optional `webgpu` package of
+prebuilt [Google Dawn](https://dawn.googlesource.com/dawn) binaries, installed
+under the globals the transform code expects. Dawn reaches the GPU through
+Vulkan on Linux and Windows and Metal on macOS, so a machine wanting to
+contribute needs a GPU and its driver — on a machine without one, Dawn
+either finds no adapter at all or falls back to a software rasterizer, which
+is roughly a thousand times slower and worth nothing to anybody. The command
+names its adapter on startup, reports its rate in steps per second, and says
+so plainly when either looks wrong; it does not refuse to run, since the
+judgment is the operator's.
+
+Progress is a line per target and a rate that updates in place:
+
+```
+[2] schnakenberg a=0.15 b=0.9 D1=4e-4 D2=8e-3 dt=0.05 · sphere · 2 knobs from the defaults
+      computing to t = 1600 (32,000 steps)
+      t = 812.4 / 1600  51%  184 steps/s  eta 1m11s  uploaded 3/3
+      computed in 2m54s — uploaded 5 solutions (t = 100, 200, 400, 800, 1600)
+```
+
+When the output is not a terminal the same lines are written periodically
+instead of in place, so a `nohup`ed log stays readable. `--dry-run` lists the
+first targets and whether each is already cached, which is a cheap way to see
+what a machine would take on before committing it; `--limit` and `--model`
+narrow the work; and ctrl-C stops after the current run, so nothing in flight
+is lost.
+
 ## The cache file
 
 Cache files are HDF5, written in the browser with
@@ -166,7 +214,17 @@ computed a combination first, and the file records which adapter that was.
 npm install
 npm run dev       # local dev server
 npm run build     # type-check + production build to dist/
+npm run build:cli # the command-line bundle, packed as dist/fill.tgz
 ```
+
+`npm run build` runs `build:cli` too, so a deployment carries both. The
+command-line bundle is an SSR vite build of
+[`src/cli/fill.ts`](src/cli/fill.ts) with everything under `src/` and numbl's
+compiler bundled in, exactly as the page's build has them; the only things
+left external are h5wasm, whose node build reads its wasm off disk, and Dawn,
+which is a native addon. [`scripts/pack-cli.mjs`](scripts/pack-cli.mjs) writes
+the published manifest, which therefore depends on neither numbl nor a
+checkout of anything.
 
 numbl is a local `file:../../numbl` dependency, exactly as in turing-surface —
 a sibling checkout of [numbl](https://github.com/flatironinstitute/numbl) is

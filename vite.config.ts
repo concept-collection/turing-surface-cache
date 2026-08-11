@@ -17,6 +17,9 @@ const numblSrc = realpathSync(resolve(import.meta.dirname, 'node_modules/numbl/s
 
 export default defineConfig({
   base: './',
+  // The page is the browser build; the command line's bundle sets this true
+  // (vite.cli.config.ts). See src/cache/h5file.ts.
+  define: { __NODE_BUILD__: 'false' },
   resolve: {
     alias: { 'numbl-src': numblSrc },
   },

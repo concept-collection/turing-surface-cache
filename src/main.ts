@@ -46,7 +46,6 @@ import {
   LMAX,
   NITER,
   LAM3,
-  AUTO_SEED,
   AUTO_DT,
   defaultChoiceParams,
   fmtChoice,
@@ -54,7 +53,7 @@ import {
 } from './cache/options.ts';
 import { stepsFor, type CacheSpec, APP_NAME, FORMAT_VERSION } from './cache/spec.ts';
 import { lookupFor, fetchCached, headCached, type CacheLookup } from './cache/client.ts';
-import { autoOrder, type AutoTarget } from './cache/autoWalk.ts';
+import { autoOrder, specForTarget, type AutoTarget } from './cache/autoWalk.ts';
 import { decodeCacheFile } from './cache/h5file.ts';
 import { SolverSession } from './cache/solver.ts';
 import { runSpec, type RunEvents, type RunOutcome, type RunSummary } from './cache/runSpec.ts';
@@ -299,25 +298,27 @@ function resetDefaults(): void {
 
 /** Point every control at one walk target (auto mode drives the same
  *  selection the user otherwise would, so the URL and the dropdowns always
- *  say what is being computed). */
+ *  say what is being computed). The values come from the target's own spec,
+ *  so currentSpec() reproduces exactly what the walk asked for. */
 function setSelection(t: AutoTarget): void {
-  const nextModel = mModelByKey(t.model)!;
+  const spec = specForTarget(t);
+  const nextModel = mModelByKey(spec.model)!;
   if (nextModel !== model) {
     model = nextModel;
     elModel.value = model.key;
     buildModelParamControls();
   }
-  params = { ...t.params };
-  const nextGeom = mGeometryByKey(t.geometry)!;
+  params = { ...spec.params };
+  const nextGeom = mGeometryByKey(spec.geometry)!;
   if (nextGeom !== geometry) {
     geometry = nextGeom;
     elGeometry.value = geometry.key;
     buildGeomParamControls();
   }
-  geomParams = { ...t.geometryParams };
-  seed = AUTO_SEED;
+  geomParams = { ...spec.geometryParams };
+  seed = spec.seed;
   elSeed.value = String(seed);
-  tEnd = Math.max(...T_END_CHOICE.values);
+  tEnd = spec.tEnd;
   elTend.value = String(tEnd);
   syncSelects();
   writeUrlState();
