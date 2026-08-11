@@ -140,7 +140,10 @@ Nothing is published to the npm registry — npm installs a tarball from a URL
 as happily as from a package name, and the tarball is built and deployed
 beside the page, so the command line is always the same commit as the app.
 The page itself offers this command, ready to copy, once an upload key is
-entered. The key can also be saved for later runs (`login` prompts for it and
+entered; the key is masked in what the page shows and real in what it copies,
+so that pasting it onto a fresh machine takes one step while a screenshot of
+the page still gives nothing away. The key can also be saved for later runs
+(`login` prompts for it and
 writes `~/.config/turing-surface-cache/key`), or passed as `--key`, though the
 environment is preferable: a key on the command line is visible to every user
 on the machine through `ps`, while another process's environment is not.

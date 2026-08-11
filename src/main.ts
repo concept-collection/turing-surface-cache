@@ -82,6 +82,10 @@ const elUploadNote = $('uploadnote');
 const elAutoBar = $('autobar');
 const elAuto = $<HTMLButtonElement>('auto');
 const elAutoNote = $('autonote');
+const elCliBar = $('clibar');
+const elCliCmd = $('clicmd');
+const elCliCopy = $<HTMLButtonElement>('clicopy');
+const elCliCopied = $('clicopied');
 const elErr = $('err');
 
 /**
@@ -1031,10 +1035,47 @@ function updateUploadNote(): void {
   elUploadNote.textContent = hasKey
     ? 'uploads enabled — locally computed solutions will be contributed'
     : '';
-  // Auto-fill exists to contribute, so it is offered only to those who can.
+  // Auto-fill exists to contribute, so it is offered only to those who can,
+  // and so is the command that does the same thing elsewhere.
   elAutoBar.hidden = !hasKey;
+  elCliBar.hidden = !hasKey;
+  elCliCmd.textContent = fillCommand('…');
+  elCliCopied.textContent = '';
   if (!hasKey && autoRunning) autoRunning = false;
 }
+
+/**
+ * The command that runs this same walk outside a browser. The tarball is
+ * deployed beside the page, so the URL is derived from this one and a preview
+ * deployment hands out its own command rather than main's.
+ *
+ * The key travels in the environment rather than in an option because argv is
+ * visible to every user on the machine through `ps`, while another process's
+ * environment is not. It is masked on screen and real in the clipboard: the
+ * displayed command would otherwise put the key in any screenshot of a page
+ * that has one, which is what the password field exists to prevent.
+ */
+function fillCommand(key: string): string {
+  const url = new URL('fill.tgz', location.href).href;
+  return `TURING_SURFACE_CACHE_KEY=${key} npx ${url}`;
+}
+
+elCliCopy.addEventListener('click', () => {
+  const key = elApiKey.value.trim();
+  if (!key) return;
+  navigator.clipboard.writeText(fillCommand(key)).then(
+    () => {
+      elCliCopied.textContent = 'copied';
+      setTimeout(() => (elCliCopied.textContent = ''), 4000);
+    },
+    () => {
+      // No clipboard (an insecure origin, usually). Copying was the intent, so
+      // show the whole thing and let it be selected by hand.
+      elCliCmd.textContent = fillCommand(key);
+      elCliCopied.textContent = 'clipboard unavailable — the key is now shown above';
+    },
+  );
+});
 
 async function boot(): Promise<void> {
   buildControls();

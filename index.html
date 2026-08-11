@@ -85,6 +85,17 @@
         padding: 8px 12px; font-size: 13px; color: var(--ink-2);
       }
       .cloud .controls { padding: 2px 0 0; }
+      /* The same walk, spelled as a command for a machine with no browser on
+         it. The key is masked here and real in the clipboard, so the command
+         is paste-and-go without the key ending up in a screenshot. */
+      #clicmd {
+        font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--ink); background: var(--sphere-bg);
+        border: 1px solid var(--line); border-radius: 6px;
+        padding: 3px 8px; max-width: 100%;
+        overflow-x: auto; white-space: nowrap;
+      }
+      #clicopied { color: var(--ok); }
       #err { color: #b35900; white-space: pre-wrap; font-size: 13px; }
     </style>
   </head>
@@ -147,6 +158,13 @@
           <button id="auto"
             title="Work through the parameter space on this machine, nearest the defaults first, computing and uploading whatever is not cached yet. Runs until stopped.">Auto-fill the cache</button>
           <span id="autonote"></span>
+        </div>
+        <div class="controls" id="clibar" hidden>
+          <span>or on a machine with no browser on it:</span>
+          <code id="clicmd"></code>
+          <button id="clicopy"
+            title="Copies the command with your key in it. The key is masked here so that it stays out of screenshots.">Copy command (includes your key)</button>
+          <span id="clicopied"></span>
         </div>
       </div>
       <p id="err"></p>
