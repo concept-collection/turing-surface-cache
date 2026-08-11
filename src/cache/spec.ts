@@ -57,8 +57,19 @@ export function canonicalJson(value: unknown): string {
   return `{${body}}`;
 }
 
+/**
+ * WebCrypto. A global in every browser, and in node from version 19; node 18
+ * has the same implementation but only under `node:crypto`, and a machine with
+ * an idle GPU is quite likely to be running whatever its distribution shipped.
+ */
+async function subtle(): Promise<SubtleCrypto> {
+  if (globalThis.crypto?.subtle) return globalThis.crypto.subtle;
+  if (__NODE_BUILD__) return (await import('node:crypto')).webcrypto.subtle as SubtleCrypto;
+  throw new Error('WebCrypto is not available');
+}
+
 export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  const digest = await (await subtle()).digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 

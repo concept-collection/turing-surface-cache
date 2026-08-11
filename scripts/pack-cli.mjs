@@ -32,9 +32,13 @@ const manifest = {
   description: 'Fill the turing-surface-cache shared cache from the command line',
   license: pkg.license,
   type: 'module',
-  engines: pkg.engines,
-  bin: { 'turing-surface-fill': 'fill.js' },
-  files: ['fill.js'],
+  // The bundle's own floor, not the repo's: node 18 is the oldest with fetch,
+  // and the launcher checks for it. Kept in step with cli-launcher.cjs.
+  engines: { node: '>=18' },
+  // The bin is the launcher, not the bundle: an old node must reach a sentence
+  // rather than a syntax error (scripts/cli-launcher.cjs).
+  bin: { 'turing-surface-fill': 'launch.cjs' },
+  files: ['launch.cjs', 'fill.js'],
   dependencies: { h5wasm: pkg.dependencies.h5wasm },
   optionalDependencies: { webgpu: pkg.optionalDependencies.webgpu },
 };
@@ -42,6 +46,7 @@ const manifest = {
 const stage = await mkdtemp(join(tmpdir(), 'turing-fill-'));
 try {
   await copyFile(join(root, 'dist-cli/fill.js'), join(stage, 'fill.js'));
+  await copyFile(join(root, 'scripts/cli-launcher.cjs'), join(stage, 'launch.cjs'));
   await writeFile(join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const out = execFileSync('npm', ['pack', '--silent', '--pack-destination', stage], {
     cwd: stage,

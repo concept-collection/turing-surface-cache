@@ -148,6 +148,14 @@ writes `~/.config/turing-surface-cache/key`), or passed as `--key`, though the
 environment is preferable: a key on the command line is visible to every user
 on the machine through `ps`, while another process's environment is not.
 
+Node 18 or newer is required — the cache keys are SHA-256 through WebCrypto,
+which older node does not have as a global, and node 18 itself has it only
+under `node:crypto`, which is worth supporting since that is what several
+current distributions ship. An older node than that cannot even parse the
+bundle, and would otherwise report a syntax error pointing at a brace, so the
+published command is a small ES5 launcher that checks the version first and
+says what to do about it.
+
 One consequence of installing from a URL is worth knowing. npx keys its
 install directory on the whole spec string it was given, so a URL that never
 changes keeps running whatever it first installed, however often the file
