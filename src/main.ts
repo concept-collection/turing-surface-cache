@@ -46,12 +46,15 @@ import {
   LMAX,
   NITER,
   LAM3,
+  AUTO_SEED,
+  AUTO_DT,
   defaultChoiceParams,
   fmtChoice,
   type DiscreteChoice,
 } from './cache/options.ts';
 import { stepsFor, type CacheSpec, APP_NAME, FORMAT_VERSION } from './cache/spec.ts';
 import { lookupFor, fetchCached, uploadCacheFile, type CacheLookup } from './cache/client.ts';
+import { autoOrder, type AutoTarget } from './cache/autoWalk.ts';
 import { encodeCacheFile, decodeCacheFile, type DecodedCacheFile } from './cache/h5file.ts';
 
 const $ = <T extends HTMLElement>(id: string): T =>
@@ -74,6 +77,9 @@ const elDownload = $<HTMLAnchorElement>('download');
 const elStats = $('stats');
 const elApiKey = $<HTMLInputElement>('apikey');
 const elUploadNote = $('uploadnote');
+const elAutoBar = $('autobar');
+const elAuto = $<HTMLButtonElement>('auto');
+const elAutoNote = $('autonote');
 const elErr = $('err');
 
 /**
@@ -160,6 +166,11 @@ let busy = false;
  *  loop before issuing reads of its own. */
 let pumping = false;
 let stopRequested = false;
+/** Set while the auto-fill walk owns the page (see autoRun). */
+let autoRunning = false;
+let autoComputed = 0;
+let autoSkipped = 0;
+let autoFailed = 0;
 /** Simulation time of the state on display (loadState resets session.t). */
 let shownT: number | null = null;
 let downloadUrl: string | null = null;
@@ -237,8 +248,12 @@ function writeUrlState(): void {
 const boundSelects: { el: HTMLSelectElement; get: () => number }[] = [];
 
 function syncSelects(): void {
-  for (const b of boundSelects) {
+  // Pruned as it goes: auto mode rebuilds the parameter controls once per
+  // target, so entries for replaced selects would otherwise pile up.
+  for (let i = boundSelects.length - 1; i >= 0; i--) {
+    const b = boundSelects[i];
     if (b.el.isConnected) b.el.value = String(b.get());
+    else boundSelects.splice(i, 1);
   }
 }
 
@@ -266,8 +281,8 @@ function makeSelect(
   return label;
 }
 
-/** Put every selection back to its default and refresh. */
-function resetDefaults(): void {
+/** Put every selection back to its default, without refreshing the display. */
+function applyDefaults(): void {
   model = mModelByKey(DEFAULT_MODEL_KEY)!;
   params = defaultChoiceParams(MODEL_CHOICES[DEFAULT_MODEL_KEY]);
   geometry = mGeometryByKey(DEFAULT_GEOMETRY_KEY)!;
@@ -281,7 +296,39 @@ function resetDefaults(): void {
   elSeed.value = String(seed);
   elTend.value = String(tEnd);
   syncSelects();
+  writeUrlState();
+}
+
+/** The Reset button: back to the defaults, and show what is there. */
+function resetDefaults(): void {
+  applyDefaults();
   onSelectionChange();
+}
+
+/** Point every control at one walk target (auto mode drives the same
+ *  selection the user otherwise would, so the URL and the dropdowns always
+ *  say what is being computed). */
+function setSelection(t: AutoTarget): void {
+  const nextModel = mModelByKey(t.model)!;
+  if (nextModel !== model) {
+    model = nextModel;
+    elModel.value = model.key;
+    buildModelParamControls();
+  }
+  params = { ...t.params };
+  const nextGeom = mGeometryByKey(t.geometry)!;
+  if (nextGeom !== geometry) {
+    geometry = nextGeom;
+    elGeometry.value = geometry.key;
+    buildGeomParamControls();
+  }
+  geomParams = { ...t.geometryParams };
+  seed = AUTO_SEED;
+  elSeed.value = String(seed);
+  tEnd = Math.max(...T_END_CHOICE.values);
+  elTend.value = String(tEnd);
+  syncSelects();
+  writeUrlState();
 }
 
 function buildModelParamControls(): void {
@@ -766,6 +813,26 @@ async function solve(): Promise<void> {
   }
 }
 
+/**
+ * Nothing that is not a number gets uploaded. A combination whose timestep is
+ * too large for its reaction blows up rather than failing, and an unattended
+ * walk would happily publish the wreckage under a hash someone later trusts.
+ */
+const stateIsFinite = (state: Record<string, Float32Array>): boolean =>
+  Object.values(state).every((a) => a.every(Number.isFinite));
+
+/** Set by reportDiverged, read by the auto walk so a blown-up combination is
+ *  counted as a failure rather than a contribution. */
+let lastRunDiverged = false;
+
+function reportDiverged(t: number): void {
+  lastRunDiverged = true;
+  elErr.textContent =
+    `the solution went non-finite at t = ${t.toFixed(2)} — nothing uploaded ` +
+    `(this combination is unstable at dt = ${fmtChoice(AUTO_DT)})`;
+  status('diverged.');
+}
+
 /** Run the solver to the spec's end time, watching the pattern form, and
  *  capture the state at every smaller listed end time on the way. */
 async function computeLocally(spec: CacheSpec, gen: number): Promise<void> {
@@ -780,6 +847,7 @@ async function computeLocally(spec: CacheSpec, gen: number): Promise<void> {
 
 async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> {
   if (!session) return;
+  lastRunDiverged = false;
   const steps = stepsFor(spec);
   const dt = spec.params.dt;
 
@@ -919,6 +987,7 @@ async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> 
     if (hit !== undefined) {
       const state = await session.readState();
       if (gen !== generation) return;
+      if (!stateIsFinite(state)) return void reportDiverged(session.steps * dt);
       // With a key on hand the snapshot goes straight to the cache; without
       // one it is kept, in case a key is entered before the run ends.
       const apiKey = elApiKey.value.trim();
@@ -926,7 +995,12 @@ async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> 
       else snapshots.push({ tEnd: hit, state });
     }
     const now = performance.now();
-    if (now - lastDraw > RENDER_EVERY_MS || session.steps >= steps) {
+    // Rendering is skipped entirely while the page is hidden, and the loop
+    // never waits on an animation frame there: a backgrounded tab throttles
+    // or stops requestAnimationFrame, which would stall an unattended run.
+    // Awaiting the GPU sync above already yields to the event loop, so Stop
+    // stays responsive either way.
+    if (!document.hidden && (now - lastDraw > RENDER_EVERY_MS || session.steps >= steps)) {
       lastDraw = now;
       await draw();
       if (gen !== generation) return;
@@ -950,6 +1024,7 @@ async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> 
 
   const final = await session.readState();
   if (gen !== generation) return;
+  if (!stateIsFinite(final)) return void reportDiverged(spec.tEnd);
   shownT = spec.tEnd;
   await draw();
   updateStats();
@@ -993,17 +1068,126 @@ async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> 
   }
 }
 
+// ---------------------------------------------------------------- auto-fill
+/** Is this solution already in the cloud? A HEAD is enough, and only the
+ *  longest end time need be asked about: a run reaching it emits every
+ *  shorter one on the way, so its presence stands for the whole chain. */
+async function isCached(lookup: CacheLookup): Promise<boolean> {
+  try {
+    const res = await fetch(lookup.url, { method: 'HEAD', cache: 'no-store' });
+    return res.ok;
+  } catch {
+    // A network hiccup is not evidence of absence, but computing anyway only
+    // costs time and ends in an upload that overwrites an identical object.
+    return false;
+  }
+}
+
+function autoNote(target: AutoTarget | null): void {
+  if (!autoRunning) {
+    elAutoNote.textContent = autoComputed || autoSkipped
+      ? `stopped — computed ${autoComputed}, skipped ${autoSkipped} already cached` +
+        (autoFailed ? `, ${autoFailed} failed` : '')
+      : '';
+    return;
+  }
+  const where = target
+    ? `${mModelByKey(target.model)!.label} on ${target.geometry}, ${target.distance} ` +
+      `knob${target.distance === 1 ? '' : 's'} from the defaults`
+    : '';
+  elAutoNote.textContent =
+    `auto-filling — computed ${autoComputed}, skipped ${autoSkipped}` +
+    (autoFailed ? `, ${autoFailed} failed` : '') + (where ? ` · ${where}` : '');
+}
+
+function setAutoUi(on: boolean): void {
+  elAuto.textContent = on ? 'Auto-filling…' : 'Auto-fill the cache';
+  elAuto.disabled = on;
+  elReset.disabled = on;
+}
+
+/**
+ * Walk the parameter space on this machine, computing and contributing
+ * whatever is not cached yet, nearest the defaults first and randomly within
+ * a distance (src/cache/autoWalk.ts). Runs until stopped.
+ *
+ * Every target is driven through the same selection the user would set by
+ * hand, so the dropdowns and the URL always say what is being computed, and
+ * the run itself is the ordinary local computation — including its
+ * background uploads, its warm start from a shorter cached run, and its
+ * divergence guard.
+ */
+async function autoRun(): Promise<void> {
+  if (!device || busy || autoRunning) return;
+  if (!elApiKey.value.trim()) return;
+  autoRunning = true;
+  autoComputed = autoSkipped = autoFailed = 0;
+  setAutoUi(true);
+  setBusy(true);
+  elErr.textContent = '';
+  // Start from a defined point — which is also the first target, since the
+  // defaults are the one combination at distance zero.
+  applyDefaults();
+  const targets = autoOrder();
+  autoNote(null);
+
+  for (const target of targets) {
+    if (!autoRunning) break;
+    setSelection(target);
+    autoNote(target);
+    generation++;
+    const gen = generation;
+    stopRequested = false;
+    const spec = currentSpec();
+    try {
+      const lookup = await lookupFor(spec);
+      status(`checking the cloud cache…`);
+      if (await isCached(lookup)) {
+        autoSkipped++;
+        setCacheNote(true);
+        continue;
+      }
+      if (!autoRunning) break;
+      setCacheNote(false);
+      await applySelection(spec);
+      if (gen !== generation) break;
+      await computeLocally(spec, gen);
+      if (gen !== generation) break;
+      if (lastRunDiverged) autoFailed++;
+      else if (!stopRequested) autoComputed++;
+    } catch (e) {
+      // One bad combination must not end the walk: report it and move on.
+      autoFailed++;
+      elErr.textContent = `auto (${spec.model}, ${spec.geometry}): ${formatFailure(e, model.source)}`;
+    }
+  }
+
+  autoRunning = false;
+  setAutoUi(false);
+  setBusy(false);
+  autoNote(null);
+}
+
 // ---------------------------------------------------------------- boot
+elAuto.addEventListener('click', () => {
+  flowChain = flowChain.then(() => autoRun()).catch(() => undefined);
+});
 elSolve.addEventListener('click', () => {
   flowChain = flowChain.then(() => solve()).catch(() => undefined);
 });
 elStop.addEventListener('click', () => {
   stopRequested = true;
+  autoRunning = false;
   setBusy(false);
 });
 elReset.addEventListener('click', () => resetDefaults());
 elResetView.addEventListener('click', () => {
   for (const s of scenes) s.resetCamera();
+});
+// The view is not drawn while the page is hidden, so it is stale on return.
+// Not while a run is reading back: every read shares one staging buffer.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && session && !pumping) void draw();
 });
 elApiKey.addEventListener('change', () => {
   const key = elApiKey.value.trim();
@@ -1013,9 +1197,13 @@ elApiKey.addEventListener('change', () => {
 });
 
 function updateUploadNote(): void {
-  elUploadNote.textContent = elApiKey.value.trim()
+  const hasKey = elApiKey.value.trim().length > 0;
+  elUploadNote.textContent = hasKey
     ? 'uploads enabled — locally computed solutions will be contributed'
     : '';
+  // Auto-fill exists to contribute, so it is offered only to those who can.
+  elAutoBar.hidden = !hasKey;
+  if (!hasKey && autoRunning) autoRunning = false;
 }
 
 async function boot(): Promise<void> {

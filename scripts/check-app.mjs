@@ -280,6 +280,7 @@ print('h5py check ok; species', list(f.attrs['species']), '; adapter:', f.attrs.
   if (e4) problems.push(`model: err: ${e4}`);
   console.log(`pass 5: allencahn ${acPanels} panel, brusselator ${brPanels} panels`);
   await page4.close();
+
 } catch (e) {
   problems.push(`fatal: ${e.message}`);
 } finally {

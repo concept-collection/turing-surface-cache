@@ -39,11 +39,11 @@ export const MODEL_CHOICES: Record<string, DiscreteChoice[]> = {
     { key: 'B', label: 'B', values: [7, 9, 11], value: 9 },
     { key: 'D1', label: 'D₁', values: [1.7e-3, 3.33e-3, 6.7e-3], value: 3.33e-3 },
     { key: 'D2', label: 'D₂', values: [8.3e-3, 1.67e-2, 3.3e-2], value: 1.67e-2 },
-    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.02 },
+    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.05 },
   ],
   allencahn: [
     { key: 'eps2', label: 'ε²', values: [5e-4, 1e-3, 2e-3], value: 1e-3 },
-    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.02 },
+    { key: 'dt', label: 'dt', values: [0.01, 0.02, 0.05], value: 0.05 },
   ],
 };
 
@@ -87,6 +87,19 @@ export const T_END_CHOICE: DiscreteChoice = {
 export const LMAX = 63;
 export const NITER = 8;
 export const LAM3 = 0.5;
+
+/**
+ * What the auto-fill walk pins rather than surveys (src/cache/autoWalk.ts).
+ * The seed picks a draw and means nothing on its own, and dt is a numerical
+ * knob rather than a property of the problem, so surveying either would
+ * multiply the work without adding a solution anyone asked for. Both values
+ * are the default of every model, so an auto-filled entry is exactly what a
+ * visitor arriving at the defaults requests. dt = 0.05 is stable for all
+ * three models: at t = 100 Brusselator saturates to u in [0.35, 8.32] and
+ * Allen-Cahn to the +/-1 wells, matching dt = 0.02 to two digits.
+ */
+export const AUTO_SEED = 1;
+export const AUTO_DT = 0.05;
 
 export const defaultChoiceParams = (choices: DiscreteChoice[]): Params =>
   Object.fromEntries(choices.map((c) => [c.key, c.value]));

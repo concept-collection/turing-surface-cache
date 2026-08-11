@@ -79,6 +79,49 @@ to know what it belongs to; the hash input includes the version string, so a
 format change moves every object rather than silently colliding with the old
 ones.
 
+## Filling the cache
+
+A cache only pays off once it holds what people ask for, and nobody wants to
+sit through the first computation of every combination. **Auto-fill the
+cache** — offered only when an upload API key is present — turns an otherwise
+idle machine into a contributor: it works through the parameter space,
+skipping whatever is already cached and computing and uploading the rest, and
+runs until stopped.
+
+Two decisions make that practical. The first is the order. About 8,400
+combinations exist (228 model-parameter sets × 37 geometries, with the seed
+and dt pinned), which is roughly three GPU-weeks at this repo's ~180 steps/s —
+exhaustible in principle, but only if the useful part comes first. Since a
+visitor starts at the defaults and changes one dropdown at a time, the chance
+that a combination is ever requested falls off steeply with the number of
+knobs that differ from the defaults, so the walk proceeds by that distance:
+every one-knob deviation before any two-knob one. One machine overnight covers
+every one- and two-knob deviation from every model's defaults, which is most
+of what anyone will ever click; the long tail can take as long as it likes.
+
+The second is that within a distance the order is **random**, and that is the
+entire coordination mechanism. Several idle browsers walking the same tiers in
+different orders, each skipping what it finds already cached, rarely duplicate
+each other and need no coordinator, no work queue, and no knowledge of one
+another. A skip costs one `HEAD` request, so a machine joining a
+well-filled region catches up in seconds.
+
+The seed and dt are pinned rather than surveyed (seed 1, dt 0.05): a seed
+picks a draw and means nothing on its own, and dt is a numerical knob rather
+than a property of the problem, so surveying either would multiply the work
+without adding a solution anyone asked for. Both are the default of every
+model, so an auto-filled entry is exactly what a visitor arriving at the
+defaults requests. Two smaller points: the walk skips the ellipsoid with all
+axes 1, since that *is* the unit sphere and the sphere geometry already
+covers it, and any run whose state goes non-finite is reported and discarded
+rather than uploaded — an unattended walk must not publish wreckage under a
+hash someone later trusts.
+
+Because it is meant to run unattended, the compute loop never waits on an
+animation frame and skips rendering entirely while the page is hidden, so a
+minimized window or a background tab keeps computing at full speed rather
+than being throttled to a crawl.
+
 Uploads go through the [tmpbucket](https://github.com/scratchrealm/tmpbucket)
 Worker: the client presents the API key and a file name, receives a presigned
 R2 PUT URL, and uploads directly. Only holders of the key can write; everyone
