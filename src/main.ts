@@ -18,7 +18,7 @@
  * this app (options.ts) — fewer knobs, same machinery.
  */
 import { requestShtDevice, describeAdapter } from './sht/sht.ts';
-import { ModelSession } from './mgpu/session.ts';
+import type { ModelSession } from './mgpu/session.ts';
 import { mModels, mModelByKey, type MModel, type Params } from './mgpu/registry.ts';
 import { formatFailure } from './mgpu/errors.ts';
 import {
@@ -53,9 +53,12 @@ import {
   type DiscreteChoice,
 } from './cache/options.ts';
 import { stepsFor, type CacheSpec, APP_NAME, FORMAT_VERSION } from './cache/spec.ts';
-import { lookupFor, fetchCached, uploadCacheFile, type CacheLookup } from './cache/client.ts';
+import { lookupFor, fetchCached, headCached, type CacheLookup } from './cache/client.ts';
 import { autoOrder, type AutoTarget } from './cache/autoWalk.ts';
-import { encodeCacheFile, decodeCacheFile, type DecodedCacheFile } from './cache/h5file.ts';
+import { decodeCacheFile } from './cache/h5file.ts';
+import { SolverSession } from './cache/solver.ts';
+import { runSpec, type RunEvents, type RunOutcome, type RunSummary } from './cache/runSpec.ts';
+import { fillWalk } from './cache/fillWalk.ts';
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -106,24 +109,21 @@ const API_KEY_STORAGE = `${APP_NAME}:apiKey`;
 const COLORMAP = colormaps.viridis;
 /** Render on a 2x finer grid than the solver's; exact interpolation. */
 const OVERSAMPLE = 2;
-/** Cap on GPU dispatches per submission (watchdog safety; see turing-surface). */
-const DISPATCH_BUDGET = 1000;
-/** Steps between syncs during a computation: many small submissions queued
- *  back to back, one wait. The readbacks and renders that pace the live view
- *  happen per chunk, not per submission — that is what lets the run advance
- *  at close to the solver's own rate. */
-const CHUNK_STEPS = 32;
 /** How often the live view renders during a computation. */
 const RENDER_EVERY_MS = 250;
+/** How often the status line is rewritten during a computation. */
+const STATUS_EVERY_MS = 200;
 
 // ---------------------------------------------------------------- state
 let model: MModel = mModelByKey(DEFAULT_MODEL_KEY)!;
 let device: GPUDevice | null = null;
-let session: ModelSession | null = null;
+/** The compiled solver and what it has applied (src/cache/solver.ts). */
+let solver: SolverSession | null = null;
 let adapterName = '';
-/** Steps per GPU submission, sized in boot() so one submission stays under
- *  the dispatch budget however expensive niter has made a step. */
-let stepsPerSubmit = 4;
+/** The live session, or null before the GPU is up. */
+function sess(): ModelSession | null {
+  return solver?.session ?? null;
+}
 
 /** The discrete selections, always exactly values from options.ts. */
 let params: Params = defaultChoiceParams(MODEL_CHOICES[DEFAULT_MODEL_KEY]);
@@ -138,14 +138,6 @@ let tEnd = T_END_CHOICE.value;
 // and a shared link opens on the same spec (and, through refresh(), the same
 // cached solution). Read once at startup; rewritten on every change.
 readUrlState();
-
-/** What the session currently has applied. Params are cheap (uniforms); a
- *  geometry change re-evaluates the surface and rebuilds the mesh; a model
- *  change recompiles the whole session, since the model is compiled into the
- *  GPU step. */
-let sessionModelKey = '';
-let sessionGeomKey = '';
-let sessionGeomParams: Params = {};
 
 let topo: SphereMeshTopology | null = null;
 let scenes: SphereScene[] = [];
@@ -437,13 +429,7 @@ async function updateCacheNote(): Promise<void> {
   } catch {
     return;
   }
-  let present: boolean | null = null;
-  try {
-    const res = await fetch(lookup.url, { method: 'HEAD', cache: 'no-store' });
-    present = res.ok ? true : res.status === 404 ? false : null;
-  } catch {
-    present = null;
-  }
+  const present = await headCached(lookup);
   if (token !== cacheNoteToken) return;
   setCacheNote(present);
 }
@@ -473,6 +459,7 @@ function disposeView(): void {
 }
 
 function buildView(surface: Float32Array): void {
+  const session = sess();
   if (!session) return;
   const view = session.viewSht;
   const { nphi } = view.cfg;
@@ -528,6 +515,7 @@ function buildView(surface: Float32Array): void {
 }
 
 async function draw(): Promise<void> {
+  const session = sess();
   if (!session || !topo) return;
   const gen = generation;
   for (let k = 0; k < model.species.length; k++) {
@@ -589,6 +577,7 @@ function resetRanges(): void {
 }
 
 function updateStats(): void {
+  const session = sess();
   if (!session) return;
   const { nlat, nphi } = session.cfg;
   const kind = `WebGPU fp32${adapterName ? ` — ${adapterName}` : ''}`;
@@ -622,6 +611,7 @@ function offerDownload(bytes: Uint8Array, name: string): void {
  *  the camera. Fresh buffers render black until the first fill, so the bare
  *  surface is shown; the caller's draw or clearDisplay follows right behind. */
 async function rebuildViewFromSession(): Promise<void> {
+  const session = sess();
   if (!session) return;
   const surface = await session.renderPositions();
   const cam = scenes[0]?.cameraState();
@@ -632,61 +622,15 @@ async function rebuildViewFromSession(): Promise<void> {
 }
 
 /**
- * Compile a full session for the spec's model. The model is the one
- * selection that cannot be swapped into a running session — its step is
- * compiled into the GPU pipelines — so changing it pays a recompile
- * (a second or two on a real GPU). The panel count follows the model's
- * species (Allen–Cahn has one), so the view is rebuilt too.
+ * Apply a selection to the solver. Which changes are cheap and which pay a
+ * recompile is the solver's business (src/cache/solver.ts); the page adds the
+ * compiling status and the rebuilt view through the events it installs in
+ * boot(), since the panel count follows the model's species (Allen–Cahn has
+ * one).
  */
-async function rebuildSession(spec: CacheSpec): Promise<void> {
-  if (!device) throw new Error('no GPU device');
-  const nextModel = mModelByKey(spec.model)!;
-  const geomModel = mGeometryByKey(spec.geometry)!;
-  session?.destroy();
-  session = null;
-  sessionModelKey = '';
-  status(`compiling ${nextModel.label}…`);
-  session = await ModelSession.create({
-    device,
-    model: nextModel,
-    params: spec.params,
-    lmax: spec.lmax,
-    oversample: OVERSAMPLE,
-    geometry: geomModel,
-    geometryParams: spec.geometryParams,
-    niter: spec.niter,
-    lam3: spec.lam3,
-  });
-  model = nextModel;
-  sessionModelKey = spec.model;
-  sessionGeomKey = spec.geometry;
-  sessionGeomParams = { ...spec.geometryParams };
-  // Never put more dispatches in one submission than the budget allows,
-  // however expensive this model's step is.
-  const opsPerStep = Math.max(1, session.describe().step.length);
-  stepsPerSubmit = Math.max(1, Math.floor(DISPATCH_BUDGET / opsPerStep));
-  await rebuildViewFromSession();
-  updateStats();
-}
-
-/** Apply the current selection to the session: params are a uniform upload;
- *  a geometry change re-evaluates the surface and rebuilds the mesh; a model
- *  change recompiles the session entirely. */
 async function applySelection(spec: CacheSpec): Promise<void> {
-  if (!session || spec.model !== sessionModelKey) {
-    await rebuildSession(spec);
-    return;
-  }
-  session.setParams(spec.params);
-  const geomChanged =
-    spec.geometry !== sessionGeomKey ||
-    JSON.stringify(spec.geometryParams) !== JSON.stringify(sessionGeomParams);
-  if (!geomChanged) return;
-  const geomModel = mGeometryByKey(spec.geometry)!;
-  await session.setGeometry(geomModel, spec.geometryParams);
-  sessionGeomKey = spec.geometry;
-  sessionGeomParams = { ...spec.geometryParams };
-  await rebuildViewFromSession();
+  if (!solver) throw new Error('no GPU device');
+  await solver.apply(spec);
 }
 
 /** Decode a fetched cache file and put it on screen. */
@@ -696,6 +640,7 @@ async function displayCached(
   spec: CacheSpec,
   gen: number,
 ): Promise<void> {
+  const session = sess();
   if (!session) return;
   const decoded = await decodeCacheFile(bytes, lookup.specJson, model.state);
   if (gen !== generation) return;
@@ -814,275 +759,151 @@ async function solve(): Promise<void> {
 }
 
 /**
- * Nothing that is not a number gets uploaded. A combination whose timestep is
- * too large for its reaction blows up rather than failing, and an unattended
- * walk would happily publish the wreckage under a hash someone later trusts.
+ * How the page tells a run in progress: the status line, the live view, and
+ * when to give up. The same events drive the Compute solution button and the
+ * auto-fill walk, so the two report a run identically.
+ *
+ * `gen` is read afresh at every check rather than captured, so the events a
+ * walk installs once still speak for whichever target is current.
  */
-const stateIsFinite = (state: Record<string, Float32Array>): boolean =>
-  Object.values(state).every((a) => a.every(Number.isFinite));
-
-/** Set by reportDiverged, read by the auto walk so a blown-up combination is
- *  counted as a failure rather than a contribution. */
-let lastRunDiverged = false;
-
-function reportDiverged(t: number): void {
-  lastRunDiverged = true;
-  elErr.textContent =
-    `the solution went non-finite at t = ${t.toFixed(2)} — nothing uploaded ` +
-    `(this combination is unstable at dt = ${fmtChoice(AUTO_DT)})`;
-  status('diverged.');
+function runEvents(gen: () => number): RunEvents {
+  let lastStatus = 0;
+  let lastDraw = 0;
+  return {
+    onPhase(phase) {
+      if (phase.kind === 'warm-search') {
+        status('not in the cache — looking for a shorter cached run…');
+      } else if (phase.kind === 'seeding') {
+        status('not in the cache — <b>computing locally</b>: seeding…');
+      } else if (phase.kind === 'encoding') {
+        status(`${doneLine(phase.run)} Writing the cache file…`);
+      } else {
+        status(
+          `${doneLine(phase.run)} Uploading to the cache ` +
+            `(${phase.uploaded}/${phase.started})…`,
+        );
+      }
+    },
+    onProgress(p) {
+      const now = performance.now();
+      if (now - lastStatus < STATUS_EVERY_MS) return;
+      lastStatus = now;
+      const from = p.warmFrom !== null ? `resumed from cached t = ${fmtChoice(p.warmFrom)} — ` : '';
+      const up = p.uploadsStarted
+        ? `, uploaded ${p.uploadsDone}/${p.uploadsStarted} snapshots`
+        : '';
+      status(
+        `not in the cache — <b>computing locally</b> (${from}` +
+          `t = ${p.t.toFixed(2)} / ${fmtChoice(p.tEnd)}, ${(100 * p.fraction).toFixed(0)}%, ` +
+          `${p.rate.toFixed(0)} steps/s${up})`,
+      );
+    },
+    onStepping() {
+      shownT = null;
+      resetRanges();
+    },
+    async onTick() {
+      // Rendering is skipped entirely while the page is hidden, and the loop
+      // never waits on an animation frame there: a backgrounded tab throttles
+      // or stops requestAnimationFrame, which would stall an unattended run.
+      // The GPU sync inside the run already yields to the event loop, so Stop
+      // stays responsive either way.
+      const now = performance.now();
+      if (document.hidden || now - lastDraw <= RENDER_EVERY_MS) return;
+      lastDraw = now;
+      await draw();
+      if (gen() !== generation) return;
+      await nextFrame();
+    },
+    async onFinal(tEnd) {
+      shownT = tEnd;
+      await draw();
+      updateStats();
+    },
+    onFile(bytes, name) {
+      offerDownload(bytes, name);
+    },
+    cancelled: () => gen() !== generation,
+    stopRequested: () => stopRequested,
+  };
 }
 
-/** Run the solver to the spec's end time, watching the pattern form, and
- *  capture the state at every smaller listed end time on the way. */
-async function computeLocally(spec: CacheSpec, gen: number): Promise<void> {
-  if (!session) return;
+/** The first sentence of every finished run's status. */
+function doneLine(run: RunSummary): string {
+  return (
+    `<b>t = ${fmtChoice(run.tEnd)}</b> — computed locally in ${run.seconds.toFixed(1)} s` +
+    (run.warmFrom !== null ? ` (resumed from cached t = ${fmtChoice(run.warmFrom)})` : '') +
+    `.`
+  );
+}
+
+/** Say how a finished run ended. Returns nothing; the caller counts. */
+async function reportOutcome(outcome: RunOutcome): Promise<void> {
+  if (outcome.kind === 'abandoned') return;
+  if (outcome.kind === 'diverged') {
+    elErr.textContent =
+      `the solution went non-finite at t = ${outcome.t.toFixed(2)} — nothing uploaded ` +
+      `(this combination is unstable at dt = ${fmtChoice(AUTO_DT)})`;
+    status('diverged.');
+    return;
+  }
+  if (outcome.kind === 'stopped') {
+    shownT = outcome.t;
+    await draw();
+    updateStats();
+    const n = outcome.uploaded.length;
+    const up = n ? ` ${n} snapshot${n > 1 ? 's' : ''} already uploaded.` : ' Nothing uploaded.';
+    status(`stopped at t = ${outcome.t.toFixed(2)}.${up}`);
+    return;
+  }
+  const line = doneLine(outcome);
+  if (outcome.uploadsStarted === 0) {
+    status(`${line} Not uploaded (no API key).`);
+    return;
+  }
+  if (outcome.uploadErrors.length) {
+    elErr.textContent = `upload: ${outcome.uploadErrors.join('; ')}`;
+  }
+  const n = outcome.uploaded.length;
+  if (n > 0) {
+    const times = [...outcome.uploaded].sort((a, b) => a - b).map(fmtChoice).join(', ');
+    const failed = outcome.uploadErrors.length
+      ? ` (${outcome.uploadErrors.length} failed)`
+      : '';
+    status(
+      `${line} <b>Uploaded ${n} solution${n > 1 ? 's' : ''}</b> ` +
+        `to the shared cache (t = ${times})${failed}.`,
+    );
+  } else {
+    status(`${line} Uploads failed.`);
+  }
+}
+
+/**
+ * Run the solver to the spec's end time, watching the pattern form, and
+ * capture the state at every smaller listed end time on the way
+ * (src/cache/runSpec.ts). Everything the page adds is in runEvents and
+ * reportOutcome.
+ */
+async function computeLocally(spec: CacheSpec, gen: number): Promise<RunOutcome> {
+  if (!solver?.session) return { kind: 'abandoned' };
   pumping = true;
   try {
-    await computeLocallyInner(spec, gen);
+    const outcome = await runSpec({
+      solver,
+      spec,
+      adapter: adapterName,
+      apiKey: () => elApiKey.value.trim(),
+      events: runEvents(() => gen),
+    });
+    if (gen === generation) await reportOutcome(outcome);
+    return outcome;
   } finally {
     pumping = false;
   }
 }
 
-async function computeLocallyInner(spec: CacheSpec, gen: number): Promise<void> {
-  if (!session) return;
-  lastRunDiverged = false;
-  const steps = stepsFor(spec);
-  const dt = spec.params.dt;
-
-  // Warm start: the state is Markovian in (U, V), so a cached run of the
-  // same spec at a smaller listed end time is an exact prefix of this one.
-  // Take the longest one there is and continue from its final state rather
-  // than recomputing it.
-  let warm: { tEnd: number; decoded: DecodedCacheFile } | null = null;
-  const earlier = T_END_CHOICE.values.filter((T) => T < spec.tEnd).sort((a, b) => b - a);
-  if (earlier.length) status('not in the cache — looking for a shorter cached run…');
-  for (const T of earlier) {
-    const lookup = await lookupFor({ ...spec, tEnd: T });
-    let bytes: Uint8Array | null = null;
-    try {
-      bytes = await fetchCached(lookup);
-    } catch {
-      break; // cache unreachable: no point probing further down the ladder
-    }
-    if (gen !== generation) return;
-    if (!bytes) continue;
-    try {
-      warm = { tEnd: T, decoded: await decodeCacheFile(bytes, lookup.specJson, model.state) };
-      break;
-    } catch {
-      continue; // an unreadable candidate is skipped, not fatal
-    }
-  }
-  if (gen !== generation) return;
-
-  let initial: Record<string, Float32Array>;
-  if (warm) {
-    session.loadState(warm.decoded.final);
-    // loadState resets the clock; put it at the cached run's end so the loop
-    // below computes only the remainder.
-    session.steps = Math.round(warm.tEnd / dt);
-    session.t = warm.tEnd;
-    // The t = 0 state travels with every file of the chain, so files written
-    // from this continuation carry the same initial state as the one resumed.
-    initial = warm.decoded.initial;
-  } else {
-    status(`not in the cache — <b>computing locally</b>: seeding…`);
-    await session.seed(spec.seed);
-    if (gen !== generation) return;
-    initial = await session.readState();
-    if (gen !== generation) return;
-  }
-  const startSteps = session.steps;
-
-  // Snapshot points: every listed end time strictly between the starting
-  // point and this run's end. The run passes through each exactly (all are
-  // whole multiples of every dt choice).
-  const snapshotAt = new Map<number, number>(); // step index -> tEnd value
-  for (const T of T_END_CHOICE.values) {
-    if (T < spec.tEnd && T > (warm?.tEnd ?? 0)) snapshotAt.set(Math.round(T / dt), T);
-  }
-  const snapshots: { tEnd: number; state: Record<string, Float32Array> }[] = [];
-
-  // Everything a cache file needs exists before the run starts, so a snapshot
-  // is encoded and uploaded the moment it is captured, overlapping the
-  // network with the GPU still stepping, rather than queued for the end.
-  const geometryCoeffs = {
-    X: session.geometry.X,
-    Y: session.geometry.Y,
-    Z: session.geometry.Z,
-  };
-  const encode = (t: number, state: Record<string, Float32Array>) =>
-    encodeCacheFile({
-      spec: { ...spec, tEnd: t },
-      grid: session!.cfg,
-      species: model.state,
-      geometry: geometryCoeffs,
-      initial,
-      final: state,
-      adapter: adapterName,
-    });
-  const uploadedTimes: number[] = [];
-  const uploadErrors: string[] = [];
-  let uploadsStarted = 0;
-  const pendingUploads: Promise<void>[] = [];
-  /** Encode + upload without the stepping loop waiting. A captured snapshot
-   *  is a complete solution of its own spec, so this stays valid even if the
-   *  run is stopped afterwards. */
-  const uploadInBackground = (
-    t: number,
-    state: Record<string, Float32Array>,
-    apiKey: string,
-    preEncoded?: Uint8Array,
-  ): void => {
-    uploadsStarted++;
-    pendingUploads.push(
-      (async () => {
-        const bytes = preEncoded ?? (await encode(t, state));
-        const lookup = await lookupFor({ ...spec, tEnd: t });
-        await uploadCacheFile(apiKey, lookup.fileName, bytes);
-        uploadedTimes.push(t);
-      })().catch((e) => {
-        uploadErrors.push(`t = ${fmtChoice(t)}: ${e instanceof Error ? e.message : e}`);
-      }),
-    );
-  };
-
-  shownT = null;
-  resetRanges();
-  const t0 = performance.now();
-  let lastStatus = 0;
-  let lastDraw = 0;
-  while (session.steps < steps) {
-    if (gen !== generation) return;
-    if (stopRequested) {
-      shownT = session.steps * dt;
-      await draw();
-      updateStats();
-      const up = uploadedTimes.length
-        ? ` ${uploadedTimes.length} snapshot${uploadedTimes.length > 1 ? 's' : ''} already uploaded.`
-        : ' Nothing uploaded.';
-      status(`stopped at t = ${(session.steps * dt).toFixed(2)}.${up}`);
-      return;
-    }
-    // One chunk: up to CHUNK_STEPS steps submitted back to back (each
-    // submission stays under the dispatch budget), then a single sync and at
-    // most one render. Reading back and drawing after every submission is
-    // what made the run advance at a fraction of the solver's rate — a
-    // readback costs several times the 3-4 steps it fenced. The chunk stops
-    // exactly at snapshot points so those states are still captured exactly.
-    let target = Math.min(steps, session.steps + CHUNK_STEPS);
-    for (const s of snapshotAt.keys()) {
-      if (s > session.steps && s < target) target = s;
-    }
-    while (session.steps < target) {
-      session.step(Math.min(stepsPerSubmit, target - session.steps));
-    }
-    // The sync bounds how far the CPU runs ahead of the GPU, and (being a
-    // promise) yields to the event loop, which is what keeps Stop clickable.
-    await session.sync();
-    if (gen !== generation) return;
-    const hit = snapshotAt.get(session.steps);
-    if (hit !== undefined) {
-      const state = await session.readState();
-      if (gen !== generation) return;
-      if (!stateIsFinite(state)) return void reportDiverged(session.steps * dt);
-      // With a key on hand the snapshot goes straight to the cache; without
-      // one it is kept, in case a key is entered before the run ends.
-      const apiKey = elApiKey.value.trim();
-      if (apiKey) uploadInBackground(hit, state, apiKey);
-      else snapshots.push({ tEnd: hit, state });
-    }
-    const now = performance.now();
-    // Rendering is skipped entirely while the page is hidden, and the loop
-    // never waits on an animation frame there: a backgrounded tab throttles
-    // or stops requestAnimationFrame, which would stall an unattended run.
-    // Awaiting the GPU sync above already yields to the event loop, so Stop
-    // stays responsive either way.
-    if (!document.hidden && (now - lastDraw > RENDER_EVERY_MS || session.steps >= steps)) {
-      lastDraw = now;
-      await draw();
-      if (gen !== generation) return;
-      await nextFrame();
-    }
-    if (now - lastStatus > 200) {
-      lastStatus = now;
-      const t = session.steps * dt;
-      const pct = ((100 * (session.steps - startSteps)) / (steps - startSteps)).toFixed(0);
-      const rate = (session.steps - startSteps) / ((now - t0) / 1000);
-      const from = warm ? `resumed from cached t = ${fmtChoice(warm.tEnd)} — ` : '';
-      const up = uploadsStarted
-        ? `, uploaded ${uploadedTimes.length}/${uploadsStarted} snapshots`
-        : '';
-      status(
-        `not in the cache — <b>computing locally</b> (${from}` +
-          `t = ${t.toFixed(2)} / ${fmtChoice(spec.tEnd)}, ${pct}%, ${rate.toFixed(0)} steps/s${up})`,
-      );
-    }
-  }
-
-  const final = await session.readState();
-  if (gen !== generation) return;
-  if (!stateIsFinite(final)) return void reportDiverged(spec.tEnd);
-  shownT = spec.tEnd;
-  await draw();
-  updateStats();
-  const secs = ((performance.now() - t0) / 1000).toFixed(1);
-  const doneLine =
-    `<b>t = ${fmtChoice(spec.tEnd)}</b> — computed locally in ${secs} s` +
-    (warm ? ` (resumed from cached t = ${fmtChoice(warm.tEnd)})` : '') +
-    `.`;
-  status(`${doneLine} Writing the cache file…`);
-
-  const finalBytes = await encode(spec.tEnd, final);
-  if (gen !== generation) return;
-  const finalLookup = await lookupFor(spec);
-  offerDownload(finalBytes, finalLookup.fileName.split('/').pop()!);
-
-  // The final solution, plus any snapshots captured before a key was entered.
-  const apiKey = elApiKey.value.trim();
-  if (apiKey) {
-    uploadInBackground(spec.tEnd, final, apiKey, finalBytes);
-    for (const snap of snapshots) uploadInBackground(snap.tEnd, snap.state, apiKey);
-  }
-  if (uploadsStarted === 0) {
-    status(`${doneLine} Not uploaded (no API key).`);
-    return;
-  }
-  status(`${doneLine} Uploading to the cache (${uploadedTimes.length}/${uploadsStarted})…`);
-  await Promise.all(pendingUploads);
-  if (gen !== generation) return;
-
-  if (uploadErrors.length) elErr.textContent = `upload: ${uploadErrors.join('; ')}`;
-  const n = uploadedTimes.length;
-  if (n > 0) {
-    const times = [...uploadedTimes].sort((a, b) => a - b).map(fmtChoice).join(', ');
-    const failed = uploadErrors.length ? ` (${uploadErrors.length} failed)` : '';
-    status(
-      `${doneLine} <b>Uploaded ${n} solution${n > 1 ? 's' : ''}</b> ` +
-        `to the shared cache (t = ${times})${failed}.`,
-    );
-  } else {
-    status(`${doneLine} Uploads failed.`);
-  }
-}
-
 // ---------------------------------------------------------------- auto-fill
-/** Is this solution already in the cloud? A HEAD is enough, and only the
- *  longest end time need be asked about: a run reaching it emits every
- *  shorter one on the way, so its presence stands for the whole chain. */
-async function isCached(lookup: CacheLookup): Promise<boolean> {
-  try {
-    const res = await fetch(lookup.url, { method: 'HEAD', cache: 'no-store' });
-    return res.ok;
-  } catch {
-    // A network hiccup is not evidence of absence, but computing anyway only
-    // costs time and ends in an upload that overwrites an identical object.
-    return false;
-  }
-}
-
 function autoNote(target: AutoTarget | null): void {
   if (!autoRunning) {
     elAutoNote.textContent = autoComputed || autoSkipped
@@ -1109,16 +930,17 @@ function setAutoUi(on: boolean): void {
 /**
  * Walk the parameter space on this machine, computing and contributing
  * whatever is not cached yet, nearest the defaults first and randomly within
- * a distance (src/cache/autoWalk.ts). Runs until stopped.
+ * a distance (src/cache/autoWalk.ts, src/cache/fillWalk.ts). Runs until
+ * stopped.
  *
  * Every target is driven through the same selection the user would set by
  * hand, so the dropdowns and the URL always say what is being computed, and
- * the run itself is the ordinary local computation — including its
- * background uploads, its warm start from a shorter cached run, and its
- * divergence guard.
+ * the run itself is the ordinary local computation — including its background
+ * uploads, its warm start from a shorter cached run, and its divergence
+ * guard.
  */
 async function autoRun(): Promise<void> {
-  if (!device || busy || autoRunning) return;
+  if (!device || !solver || busy || autoRunning) return;
   if (!elApiKey.value.trim()) return;
   autoRunning = true;
   autoComputed = autoSkipped = autoFailed = 0;
@@ -1128,39 +950,46 @@ async function autoRun(): Promise<void> {
   // Start from a defined point — which is also the first target, since the
   // defaults are the one combination at distance zero.
   applyDefaults();
-  const targets = autoOrder();
   autoNote(null);
 
-  for (const target of targets) {
-    if (!autoRunning) break;
-    setSelection(target);
-    autoNote(target);
-    generation++;
-    const gen = generation;
-    stopRequested = false;
-    const spec = currentSpec();
-    try {
-      const lookup = await lookupFor(spec);
-      status(`checking the cloud cache…`);
-      if (await isCached(lookup)) {
+  // The generation of the target being computed, read by the run events.
+  let walkGen = 0;
+  await fillWalk({
+    targets: autoOrder(),
+    solver,
+    adapter: adapterName,
+    apiKey: () => elApiKey.value.trim(),
+    beforeTarget(target) {
+      setSelection(target);
+      autoNote(target);
+      generation++;
+      walkGen = generation;
+      stopRequested = false;
+      return currentSpec();
+    },
+    events: {
+      ...runEvents(() => walkGen),
+      onTarget: () => status('checking the cloud cache…'),
+      onCached: (target) => {
         autoSkipped++;
         setCacheNote(true);
-        continue;
-      }
-      if (!autoRunning) break;
-      setCacheNote(false);
-      await applySelection(spec);
-      if (gen !== generation) break;
-      await computeLocally(spec, gen);
-      if (gen !== generation) break;
-      if (lastRunDiverged) autoFailed++;
-      else if (!stopRequested) autoComputed++;
-    } catch (e) {
-      // One bad combination must not end the walk: report it and move on.
-      autoFailed++;
-      elErr.textContent = `auto (${spec.model}, ${spec.geometry}): ${formatFailure(e, model.source)}`;
-    }
-  }
+        autoNote(target);
+      },
+      onComputing: () => setCacheNote(false),
+      onOutcome: (target, _spec, outcome) => {
+        if (outcome.kind === 'done') autoComputed++;
+        else if (outcome.kind === 'diverged') autoFailed++;
+        autoNote(target);
+      },
+      onFailure: (target, spec, e) => {
+        autoFailed++;
+        elErr.textContent =
+          `auto (${spec.model}, ${spec.geometry}): ${formatFailure(e, model.source)}`;
+        autoNote(target);
+      },
+      walkStopped: () => !autoRunning,
+    },
+  });
 
   autoRunning = false;
   setAutoUi(false);
@@ -1187,7 +1016,7 @@ elResetView.addEventListener('click', () => {
 // The view is not drawn while the page is hidden, so it is stale on return.
 // Not while a run is reading back: every read shares one staging buffer.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && session && !pumping) void draw();
+  if (!document.hidden && sess() && !pumping) void draw();
 });
 elApiKey.addEventListener('change', () => {
   const key = elApiKey.value.trim();
@@ -1215,9 +1044,16 @@ async function boot(): Promise<void> {
   void updateCacheNote();
   try {
     device = await requestShtDevice();
+    // Before the adapter is even described, so a selection change during boot
+    // finds a solver to apply itself to rather than an error.
+    solver = new SolverSession(device, OVERSAMPLE, {
+      onCompiling: (m) => status(`compiling ${m.label}…`),
+      onSurface: () => rebuildViewFromSession(),
+    });
     adapterName = await describeAdapter(device);
   } catch (e) {
     device = null;
+    solver = null;
     elErr.textContent =
       `WebGPU is not available (${e instanceof Error ? e.message : e}). ` +
       `Use a WebGPU-capable browser such as Chrome or Edge.`;
@@ -1230,7 +1066,7 @@ async function boot(): Promise<void> {
   });
 
   try {
-    await rebuildSession(currentSpec());
+    await applySelection(currentSpec());
   } catch (e) {
     elErr.textContent = formatFailure(e, model.source);
     status('failed to compile.');

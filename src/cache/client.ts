@@ -36,6 +36,27 @@ export async function fetchCached(lookup: CacheLookup): Promise<Uint8Array | nul
   return new Uint8Array(await res.arrayBuffer());
 }
 
+/**
+ * Is this solution in the cloud? A HEAD is enough. Three answers, not two:
+ * null is "could not tell", which a note may show as nothing at all and a
+ * walk treats as absence — a network hiccup is not evidence that a file is
+ * there, and computing it anyway only costs time and ends in an upload that
+ * overwrites an identical object.
+ */
+export async function headCached(lookup: CacheLookup): Promise<boolean | null> {
+  try {
+    const res = await fetch(lookup.url, { method: 'HEAD', cache: 'no-store' });
+    return res.ok ? true : res.status === 404 ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+/** headCached, for a caller with nothing to say about "could not tell". */
+export async function isCached(lookup: CacheLookup): Promise<boolean> {
+  return (await headCached(lookup)) === true;
+}
+
 /** Upload one cache file. Resolves to its public URL. */
 export async function uploadCacheFile(
   apiKey: string,
