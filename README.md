@@ -148,6 +148,16 @@ writes `~/.config/turing-surface-cache/key`), or passed as `--key`, though the
 environment is preferable: a key on the command line is visible to every user
 on the machine through `ps`, while another process's environment is not.
 
+One consequence of installing from a URL is worth knowing. npx keys its
+install directory on the whole spec string it was given, so a URL that never
+changes keeps running whatever it first installed, however often the file
+behind it has been replaced — and neither `--prefer-online` nor a changed
+version in the manifest makes any difference, since nothing remote is
+consulted once that directory exists. The command the page offers therefore
+carries the build it belongs to (`fill.tgz?v=<commit>`), which makes every
+deployment a new spec and so a fresh install. The bare URL above is right the
+first time and stale ever after; `--help` says which build is running.
+
 The walk, the runs and the uploads are the page's own — the same modules under
 [`src/cache/`](src/cache/), driven by console output instead of a status bar
 (see [`src/cli/fill.ts`](src/cli/fill.ts)). What differs is the WebGPU: node

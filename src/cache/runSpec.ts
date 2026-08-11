@@ -101,6 +101,8 @@ export interface RunOptions {
   spec: CacheSpec;
   /** Which GPU computed it; recorded in every file it writes. */
   adapter: string;
+  /** What is driving that GPU: 'browser-webgpu', or the command line's Dawn. */
+  runtime: string;
   /** Read at every upload point, so a key entered mid-run still contributes. */
   apiKey(): string;
   events?: RunEvents;
@@ -116,7 +118,7 @@ const stateIsFinite = (state: Record<string, Float32Array>): boolean =>
 
 /** Run the solver to the spec's end time, contributing everything it passes. */
 export async function runSpec(opts: RunOptions): Promise<RunOutcome> {
-  const { solver, spec, adapter, apiKey } = opts;
+  const { solver, spec, adapter, runtime, apiKey } = opts;
   const ev = opts.events ?? {};
   const cancelled = (): boolean => ev.cancelled?.() ?? false;
   const session = solver.live;
@@ -194,6 +196,7 @@ export async function runSpec(opts: RunOptions): Promise<RunOutcome> {
       initial,
       final: state,
       adapter,
+      runtime,
     });
   const uploadedTimes: number[] = [];
   const uploadErrors: string[] = [];

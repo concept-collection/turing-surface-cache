@@ -7,6 +7,7 @@
  * of a browser's WebGPU, a key from the environment instead of localStorage,
  * and lines of text instead of a status bar.
  */
+import { tmpdir } from 'node:os';
 import { requestShtDevice, describeAdapter } from '../sht/sht.ts';
 import { mModelByKey } from '../mgpu/registry.ts';
 import { formatFailure } from '../mgpu/errors.ts';
@@ -21,6 +22,7 @@ import { autoOrder, specForTarget, type AutoTarget } from '../cache/autoWalk.ts'
 import { headCached, lookupFor, verifyApiKey } from '../cache/client.ts';
 import { SolverSession } from '../cache/solver.ts';
 import { fillWalk } from '../cache/fillWalk.ts';
+import { setScratchDir } from '../cache/h5file.ts';
 import { stepsFor } from '../cache/spec.ts';
 import type { RunSummary } from '../cache/runSpec.ts';
 import { installWebGpu, errMsg, isSoftwareAdapter, NO_ADAPTER_HINT } from './webgpu.ts';
@@ -44,7 +46,11 @@ Options
                     a short run hashes to its own honest cache entry)
 
 An upload key is required: the walk exists to contribute. Solutions are read
-by everyone and written only by key holders.`;
+by everyone and written only by key holders.
+
+This is build ${__BUILD_ID__}. npx keys its install directory on the whole
+URL it was given, so a newer build comes from the command the page offers,
+whose URL carries the build it belongs to.`;
 
 interface Options {
   command: 'fill' | 'login' | 'help';
@@ -191,7 +197,7 @@ async function fill(opts: Options, targets: AutoTarget[], apiKey: string): Promi
     throw new Error(`${errMsg(e)}\n${NO_ADAPTER_HINT}`);
   });
   const adapter = await describeAdapter(device);
-  say(`${runtime} · ${adapter}`);
+  say(`build ${__BUILD_ID__} · ${runtime} · ${adapter}`);
   say(`uploads enabled (key ${maskKey(apiKey)})`);
   if (isSoftwareAdapter(adapter)) {
     say('');
@@ -226,6 +232,7 @@ async function fill(opts: Options, targets: AutoTarget[], apiKey: string): Promi
     targets,
     solver,
     adapter,
+    runtime,
     apiKey: () => apiKey,
     beforeTarget: (target) => {
       index++;
@@ -300,6 +307,9 @@ async function fill(opts: Options, targets: AutoTarget[], apiKey: string): Promi
 
 // ---------------------------------------------------------------- main
 async function main(): Promise<void> {
+  // h5wasm's node build writes through to the real filesystem, so its scratch
+  // files need a real directory to live in (src/cache/h5file.ts).
+  setScratchDir(tmpdir());
   const opts = parseArgs(process.argv.slice(2));
   if (opts.command === 'help') {
     say(HELP);

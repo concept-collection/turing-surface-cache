@@ -40,6 +40,7 @@ export interface FillOptions {
   targets: AutoTarget[];
   solver: SolverSession;
   adapter: string;
+  runtime: string;
   apiKey(): string;
   /**
    * Take the selection to this target and hand back the spec to compute. The
@@ -70,6 +71,7 @@ export async function fillWalk(opts: FillOptions): Promise<FillCounts> {
         solver: opts.solver,
         spec,
         adapter: opts.adapter,
+        runtime: opts.runtime,
         apiKey: opts.apiKey,
         events: ev,
       });

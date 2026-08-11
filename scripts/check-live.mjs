@@ -10,6 +10,9 @@ const browser = await puppeteer.launch({
   executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome',
   args: ['--headless=new', '--no-sandbox', '--enable-unsafe-webgpu',
     '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader'],
+  // A wait is one CDP call lasting as long as the wait, so the default 180 s
+  // cap on a call is what a slow run trips over first.
+  protocolTimeout: 900_000,
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 1100, height: 900 });

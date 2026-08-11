@@ -38,6 +38,8 @@ export interface CacheFileData {
   final: Record<string, Float32Array>;
   /** Provenance: which GPU computed it. */
   adapter: string;
+  /** And what was driving it — a browser, or the command line's Dawn. */
+  runtime: string;
 }
 
 interface H5Module {
@@ -69,6 +71,31 @@ interface EmFS {
 }
 
 let scratchCounter = 0;
+
+/**
+ * Where the scratch file that h5wasm reads or writes lives.
+ *
+ * In the browser it lives in h5wasm's own in-memory filesystem, where any
+ * absolute path will do and nothing touches a disk. The node build is
+ * compiled with NODERAWFS, which is to say its filesystem *is* the real one:
+ * the same path would name a file in the root directory, which fails with a
+ * wall of HDF5 diagnostics rather than an error anyone could act on. A real
+ * temporary directory is therefore used there, and the command line replaces
+ * this default with the platform's own (src/cli/fill.ts).
+ */
+let scratchDir = __NODE_BUILD__ ? '/tmp/' : '/';
+
+/** Set the directory for those scratch files; node only. */
+export function setScratchDir(dir: string): void {
+  scratchDir = dir.endsWith('/') ? dir : `${dir}/`;
+}
+
+/** Two fills on one machine share that real directory; a page's filesystem is
+ *  its own, so there is nothing to distinguish there. */
+const scratchTag = __NODE_BUILD__ ? `${process.pid}-` : '';
+
+const scratchPath = (what: string): string =>
+  `${scratchDir}turing-surface-cache-${scratchTag}${what}-${scratchCounter++}.h5`;
 
 async function withH5<T>(fn: (h5: H5Module, fs: EmFS) => T | Promise<T>): Promise<T> {
   // Two builds of the same library: the browser one carries the wasm inside
@@ -102,7 +129,7 @@ const coeffsOf = (group: H5Obj, groupName: string, name: string, nlm: number): F
 /** Serialize one solution to HDF5 bytes. */
 export function encodeCacheFile(data: CacheFileData): Promise<Uint8Array> {
   return withH5((h5, FS) => {
-    const path = `/encode-${scratchCounter++}.h5`;
+    const path = scratchPath('encode');
     const file = new h5.File(path, 'w');
     try {
       const { spec, grid } = data;
@@ -117,7 +144,7 @@ export function encodeCacheFile(data: CacheFileData): Promise<Uint8Array> {
       file.create_group('backend');
       const backend = groupOf(file, 'backend');
       backend.create_attribute('adapter', data.adapter);
-      backend.create_attribute('runtime', 'browser-webgpu');
+      backend.create_attribute('runtime', data.runtime);
       backend.create_attribute('precision', 'fp32');
 
       file.create_group('spec');
@@ -169,9 +196,13 @@ export function encodeCacheFile(data: CacheFileData): Promise<Uint8Array> {
     } finally {
       file.close();
     }
-    const bytes = FS.readFile(path);
-    FS.unlink(path);
-    return bytes;
+    try {
+      return FS.readFile(path);
+    } finally {
+      // Under NODERAWFS this is a real file in a real temporary directory, so
+      // it is removed on the way out however this ends.
+      FS.unlink(path);
+    }
   });
 }
 
@@ -198,7 +229,7 @@ export function decodeCacheFile(
   expectSpecies: string[],
 ): Promise<DecodedCacheFile> {
   return withH5((h5, FS) => {
-    const path = `/decode-${scratchCounter++}.h5`;
+    const path = scratchPath('decode');
     FS.writeFile(path, bytes);
     const file = new h5.File(path, 'r');
     try {

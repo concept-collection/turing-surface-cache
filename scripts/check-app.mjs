@@ -25,8 +25,11 @@ import puppeteer from 'puppeteer-core';
 
 const DIST = new URL('../dist/', import.meta.url).pathname;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const T_END = '5';
-const T_END_LONG = '10';
+// Short enough that the whole check is a couple of minutes on the software
+// rasterizer CI runs it on, long enough that the run passes through T_END on
+// its way to T_END_LONG (which is what the warm start needs).
+const T_END = '2';
+const T_END_LONG = '4';
 
 const server = createServer(async (req, res) => {
   try {
@@ -46,6 +49,10 @@ const browser = await puppeteer.launch({
   executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome',
   args: ['--headless=new', '--no-sandbox', '--enable-unsafe-webgpu',
     '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader'],
+  // waitForFunction is one CDP call that lasts as long as the wait does, so
+  // the default 180 s cap on a call, not the waits' own timeouts, is what a
+  // slow run trips over.
+  protocolTimeout: 900_000,
 });
 
 const problems = [];
@@ -136,7 +143,9 @@ try {
   const e1 = await errOf(page1);
   if (e1) problems.push(`miss: err: ${e1}`);
   if (!/computed locally/.test(s1)) problems.push(`miss: unexpected status: ${s1}`);
-  if (!/t = 5\b/.test(s1)) problems.push(`miss: did not stop at t = 5: ${s1}`);
+  if (!new RegExp(`t = ${T_END}\\b`).test(s1)) {
+    problems.push(`miss: did not stop at t = ${T_END}: ${s1}`);
+  }
 
   const fileName = await page1.$eval('#download', (a) => a.download);
   const b64 = await page1.$eval('#download', async (a) => {
@@ -167,8 +176,8 @@ f = h5py.File('${h5Path}', 'r')
 spec = json.loads(f.attrs['spec_json'])
 assert f.attrs['app'] == 'turing-surface-cache', f.attrs['app']
 assert int(f.attrs['format_version']) == 1
-assert spec['tEnd'] == 5 and spec['model'] == 'schnakenberg', spec
-assert int(f['spec'].attrs['steps']) == round(5 / spec['params']['dt'])
+assert spec['tEnd'] == ${T_END} and spec['model'] == 'schnakenberg', spec
+assert int(f['spec'].attrs['steps']) == round(${T_END} / spec['params']['dt'])
 nlm = (spec['lmax'] + 1) * (spec['lmax'] + 2) // 2
 for g in ('geometry/Gx', 'geometry/Gy', 'geometry/Gz', 'initial/U', 'initial/V', 'final/U', 'final/V'):
     d = f[g]
@@ -212,7 +221,7 @@ print('h5py check ok; species', list(f.attrs['species']), '; adapter:', f.attrs.
   await page2.close();
 
   // ---- pass 4: warm start from the shorter cached run ----------------------
-  // Only the t = 5 file is in the "cache"; asking for t = 10 must resume from
+  // Only the T_END file is in the "cache"; asking for T_END_LONG must resume from
   // it and compute just the remainder.
   const page3 = await browser.newPage();
   watch(page3, 'warm:');
@@ -234,9 +243,11 @@ print('h5py check ok; species', list(f.attrs['species']), '; adapter:', f.attrs.
   console.log('pass 4 status:', s3);
   const e3 = await errOf(page3);
   if (e3) problems.push(`warm: err: ${e3}`);
-  if (!/t = 10\b/.test(s3)) problems.push(`warm: did not stop at t = 10: ${s3}`);
-  if (!/resumed from cached t = 5\b/.test(s3)) {
-    problems.push(`warm: expected a resume from t = 5: ${s3}`);
+  if (!new RegExp(`t = ${T_END_LONG}\\b`).test(s3)) {
+    problems.push(`warm: did not stop at t = ${T_END_LONG}: ${s3}`);
+  }
+  if (!new RegExp(`resumed from cached t = ${T_END}\\b`).test(s3)) {
+    problems.push(`warm: expected a resume from t = ${T_END}: ${s3}`);
   }
   const warmFile = await page3.$eval('#download', (a) => a.download);
   if (warmFile === fileName || !/^[0-9a-f]{64}\.h5$/.test(warmFile)) {

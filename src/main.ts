@@ -898,6 +898,7 @@ async function computeLocally(spec: CacheSpec, gen: number): Promise<RunOutcome>
       solver,
       spec,
       adapter: adapterName,
+      runtime: 'browser-webgpu',
       apiKey: () => elApiKey.value.trim(),
       events: runEvents(() => gen),
     });
@@ -963,6 +964,7 @@ async function autoRun(): Promise<void> {
     targets: autoOrder(),
     solver,
     adapter: adapterName,
+    runtime: 'browser-webgpu',
     apiKey: () => elApiKey.value.trim(),
     beforeTarget(target) {
       setSelection(target);
@@ -1056,7 +1058,10 @@ function updateUploadNote(): void {
  * that has one, which is what the password field exists to prevent.
  */
 function fillCommand(key: string): string {
-  const url = new URL('fill.tgz', location.href).href;
+  // The build id is not decoration: npx keys its install directory on the whole
+  // spec string, so a URL that never changes keeps running whatever it first
+  // installed. This one changes with every deployment.
+  const url = new URL(`fill.tgz?v=${__BUILD_ID__}`, location.href).href;
   return `TURING_SURFACE_CACHE_KEY=${key} npx ${url}`;
 }
 

@@ -6,6 +6,9 @@
  */
 declare const __NODE_BUILD__: boolean;
 
+/** The commit this was built from, or 'dev'. Defined by both vite configs. */
+declare const __BUILD_ID__: string;
+
 /** Vite's `?raw` suffix imports a file's text. Used to load .m model sources. */
 declare module '*?raw' {
   const source: string;
