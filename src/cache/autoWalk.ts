@@ -12,6 +12,11 @@
  * ask for within a day rather than a month, and still covers everything in
  * the limit.
  *
+ * The model is not one of those knobs. Someone who came for Allen–Cahn starts
+ * at its defaults, not at Schnakenberg's, so the three models are three
+ * origins rather than one origin and two deviations from it, and each is
+ * surrounded before any of them is explored far.
+ *
  * Within a distance the order is random, and that is the whole coordination
  * mechanism between machines: several idle browsers walking the same tiers in
  * different orders, each skipping what it finds already cached, rarely
@@ -23,7 +28,6 @@
 import type { Params } from '../mgpu/registry.ts';
 import {
   MODEL_CHOICES,
-  DEFAULT_MODEL_KEY,
   GEOMETRY_CHOICES,
   AUTO_DT,
   AUTO_SEED,
@@ -41,7 +45,8 @@ export interface AutoTarget {
   params: Params;
   geometry: string;
   geometryParams: Params;
-  /** How many knobs differ from the app's defaults. */
+  /** How many knobs differ from this model's defaults — the model itself
+   *  not being one of them. */
   distance: number;
 }
 
@@ -98,7 +103,6 @@ export function enumerateTargets(): AutoTarget[] {
   const geometries = geometryOptions();
   const out: AutoTarget[] = [];
   for (const [modelKey, choices] of Object.entries(MODEL_CHOICES)) {
-    const modelDistance = modelKey === DEFAULT_MODEL_KEY ? 0 : 1;
     for (const p of combos(choices, { dt: AUTO_DT })) {
       for (const g of geometries) {
         out.push({
@@ -106,7 +110,7 @@ export function enumerateTargets(): AutoTarget[] {
           params: p.values,
           geometry: g.geometry,
           geometryParams: g.params,
-          distance: modelDistance + p.distance + g.distance,
+          distance: p.distance + g.distance,
         });
       }
     }

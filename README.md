@@ -88,16 +88,20 @@ idle machine into a contributor: it works through the parameter space,
 skipping whatever is already cached and computing and uploading the rest, and
 runs until stopped.
 
-Two decisions make that practical. The first is the order. About 8,400
-combinations exist (228 model-parameter sets × 37 geometries, with the seed
+Two decisions make that practical. The first is the order. About 8,200
+combinations exist (228 model-parameter sets × 36 geometries, with the seed
 and dt pinned), which is roughly three GPU-weeks at this repo's ~180 steps/s —
 exhaustible in principle, but only if the useful part comes first. Since a
 visitor starts at the defaults and changes one dropdown at a time, the chance
 that a combination is ever requested falls off steeply with the number of
 knobs that differ from the defaults, so the walk proceeds by that distance:
-every one-knob deviation before any two-knob one. One machine overnight covers
-every one- and two-knob deviation from every model's defaults, which is most
-of what anyone will ever click; the long tail can take as long as it likes.
+every one-knob deviation before any two-knob one. The model is not counted
+among those knobs: somebody who came for Allen–Cahn starts at its defaults
+rather than at Schnakenberg's, so the three models are three origins rather
+than one origin and two deviations from it, and each is surrounded before any
+of them is explored far. One machine overnight covers every one- and two-knob
+deviation from every model's defaults, which is most of what anyone will ever
+click; the long tail can take as long as it likes.
 
 The second is that within a distance the order is **random**, and that is the
 entire coordination mechanism. Several idle browsers walking the same tiers in
