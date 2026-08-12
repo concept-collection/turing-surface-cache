@@ -1,6 +1,7 @@
 /** Screenshot the app (dist/) in headless Chrome after the boot-time solve
- *  finishes. Talks to the real cache.
- *  Usage: node scripts/screenshot.mjs out.png [light|dark] [tEnd] */
+ *  finishes. Talks to the real cache. The sweep page is screenshotted as it
+ *  loads, without computing: it shows whatever of the sweep is cached.
+ *  Usage: node scripts/screenshot.mjs out.png [light|dark] [tEnd] [index|sweep] */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -9,6 +10,10 @@ import puppeteer from 'puppeteer-core';
 const out = process.argv[2] ?? 'demo.png';
 const scheme = process.argv[3] ?? 'light';
 const tEnd = process.argv[4] ?? '100';
+const which = process.argv[5] ?? 'index';
+if (which !== 'index' && which !== 'sweep') {
+  throw new Error(`the page is 'index' or 'sweep', not '${which}'`);
+}
 const DIST = new URL('../dist/', import.meta.url).pathname;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
@@ -40,12 +45,17 @@ await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }
 page.on('console', (m) => console.log('  [page]', m.text()));
 // The ?tend hook accepts any end time, listed or not, so a short test run
 // can be screenshotted too.
-await page.goto(`http://127.0.0.1:${port}/index.html?tend=${tEnd}`, { waitUntil: 'load' });
+await page.goto(`http://127.0.0.1:${port}/${which}.html?tend=${tEnd}`, { waitUntil: 'load' });
 await page.waitForSelector('#tend');
 // Terminal statuses only — "checking the cloud cache…" is transient. On a
-// miss the page settles on empty windows; press the button so the screenshot
-// shows a pattern either way.
-const idle = /from the cloud cache|press Compute solution|failed/;
+// miss the single-solution page settles on empty windows; press the button so
+// the screenshot shows a pattern either way. The sweep page computes nothing:
+// three or four runs is more than a screenshot is worth, and the cached part
+// of the sweep is what it is meant to show.
+const idle =
+  which === 'sweep'
+    ? /values (in the cloud cache|loaded)|failed/
+    : /from the cloud cache|press Compute solution|failed/;
 await page.waitForFunction(
   (re) => new RegExp(re).test(document.getElementById('status')?.textContent ?? '') ||
     (document.getElementById('err')?.textContent?.length ?? 0) > 4,

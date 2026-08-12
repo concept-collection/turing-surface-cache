@@ -22,6 +22,10 @@ export default mergeConfig(
       minify: false,
       rollupOptions: {
         external: ['h5wasm', 'h5wasm/node', 'webgpu'],
+        // The page build's two-HTML input would otherwise merge in here;
+        // a string wins over an object in mergeConfig, restoring the one
+        // node entry.
+        input: 'src/cli/fill.ts',
         output: { entryFileNames: 'fill.js', banner: '#!/usr/bin/env node' },
       },
     },

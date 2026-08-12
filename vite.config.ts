@@ -49,5 +49,13 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    rollupOptions: {
+      // Two pages, deployed side by side: the single-solution page and the
+      // parameter sweep.
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        sweep: resolve(import.meta.dirname, 'sweep.html'),
+      },
+    },
   },
 });

@@ -1,0 +1,131 @@
+/* One stylesheet for both pages (index.html and sweep.html), linked from
+   each head so the two stay one design rather than drifting copies. */
+:root {
+  --bg: #ffffff;
+  --ink: #1f2328;
+  --ink-2: #57606a;
+  --line: #d0d7de;
+  --accent: #0969da;
+  --ok: #1a7f37;
+  --sphere-bg: #f4f6f8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --ink: #e6e9ec;
+    --ink-2: #9aa4af;
+    --line: #333b44;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --sphere-bg: #14161c;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 20px; margin: 0 0 2px; }
+.sub { color: var(--ink-2); margin: 0 0 12px; font-size: 13px; }
+.sub a { color: var(--accent); }
+.controls {
+  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  padding: 6px 0;
+}
+.controls[hidden] { display: none; }
+.controls label { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+select, input[type="password"], input[type="text"], button {
+  font: inherit; font-size: 13px;
+  color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; min-width: 8em; }
+button:disabled { opacity: 0.5; cursor: default; }
+#cachenote { font-size: 13px; color: var(--ink-2); }
+#cachenote b { color: var(--ok); font-weight: 600; }
+#status { margin-top: 10px; font-size: 13.5px; }
+#status b { font-weight: 600; }
+#panels { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
+.panel {
+  flex: 1 1 320px; min-width: 280px;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  display: flex;
+}
+.sphere-box { flex: 1; aspect-ratio: 1 / 1; max-height: 70vh; position: relative; }
+.species-tag {
+  position: absolute; top: 8px; left: 10px; z-index: 2;
+  font-size: 15px; font-weight: 600; color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 1px 10px; border-radius: 12px;
+  pointer-events: none;
+}
+.colorbar {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 8px 4px; background: var(--sphere-bg);
+  width: 52px; flex: none; box-sizing: border-box;
+}
+.colorbar canvas { border: 1px solid var(--line); border-radius: 2px; }
+.colorbar-label { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stats { margin-top: 10px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 600; }
+.cloud {
+  margin-top: 14px; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; font-size: 13px; color: var(--ink-2);
+}
+.cloud .controls { padding: 2px 0 0; }
+/* The same walk, spelled as a command for a machine with no browser on
+   it. The key is masked here and real in the clipboard, so the command
+   is paste-and-go without the key ending up in a screenshot. */
+#clicmd {
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink); background: var(--sphere-bg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 8px; max-width: 100%;
+  overflow-x: auto; white-space: nowrap;
+}
+#clicopied { color: var(--ok); }
+/* Troubleshooting, folded away: the failures below are undiscoverable
+   from the error alone, and the page is where people start. */
+#clihelp { margin-top: 4px; font-size: 12.5px; }
+#clihelp[hidden] { display: none; }
+#clihelp summary { cursor: pointer; color: var(--accent); width: fit-content; }
+#clihelp p { margin: 8px 0; max-width: 68ch; }
+#clihelp code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#clihelp pre {
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--sphere-bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; overflow-x: auto;
+  color: var(--ink);
+}
+#err { color: #b35900; white-space: pre-wrap; font-size: 13px; }
+
+/* The sweep page's knob: one model parameter running over its listed values,
+   everything else fixed. The tick under each value says whether that value is
+   in the cache — dimmed ones are not there yet. */
+.sweepbar {
+  display: flex; align-items: flex-start; gap: 14px;
+  margin-top: 10px; flex-wrap: wrap;
+}
+.knobtrack { flex: 0 1 420px; min-width: 240px; display: flex; flex-direction: column; }
+#knob { width: 100%; margin: 2px 0 0; accent-color: var(--accent); }
+.ticks { display: flex; justify-content: space-between; }
+.tick {
+  border: none; background: none; padding: 2px 0; cursor: pointer;
+  font-family: inherit; font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2); opacity: 0.55;
+}
+.tick.cached { opacity: 1; }
+.tick.current { color: var(--accent); font-weight: 600; opacity: 1; }
+#knobval {
+  font-size: 15px; font-weight: 600; padding-top: 14px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#values { font-variant-numeric: tabular-nums; }
+#valuesnote { font-size: 12.5px; color: var(--ink-2); }

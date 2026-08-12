@@ -292,6 +292,109 @@ print('h5py check ok; species', list(f.attrs['species']), '; adapter:', f.attrs.
   console.log(`pass 5: allencahn ${acPanels} panel, brusselator ${brPanels} panels`);
   await page4.close();
 
+  // ---- pass 6: the sweep page ----------------------------------------------
+  // The pass-1 file is the dt = 0.05 member of a dt sweep at tend=T_END; the
+  // other two values 404. The page must load the cached one up front, put the
+  // knob on it, show a gap where a value is missing, and Compute missing
+  // values must fill both gaps locally (no key, so nothing uploads).
+  const page5 = await browser.newPage();
+  watch(page5, 'sweep:');
+  await interceptCache(page5, bytes, fileName);
+  await page5.setViewport({ width: 1100, height: 900 });
+  await page5.goto(
+    `http://127.0.0.1:${port}/sweep.html?tend=${T_END},${T_END_LONG}#tend=${T_END}&sweep=dt`,
+    { waitUntil: 'load' },
+  );
+  await page5.waitForFunction(
+    () => /values in the cloud cache|failed/.test(
+      document.getElementById('status')?.textContent ?? '') ||
+      (document.getElementById('err')?.textContent?.length ?? 0) > 4,
+    { timeout: 600_000 },
+  );
+  const s6 = await statusOf(page5);
+  console.log('pass 6 status:', s6);
+  if (!/1 of 3.*values in the cloud cache/.test(s6)) {
+    problems.push(`sweep: unexpected status: ${s6}`);
+  }
+  const knob = await page5.$eval('#knob', (el) => ({ value: el.value, max: el.max }));
+  if (knob.max !== '2' || knob.value !== '1') {
+    problems.push(`sweep: knob at ${knob.value} of ${knob.max}, expected 1 of 2`);
+  }
+  const loadedTicks = await page5.$$eval('.tick.cached', (els) => els.length);
+  if (loadedTicks !== 1) problems.push(`sweep: expected 1 loaded tick, got ${loadedTicks}`);
+  const sweepPanels = await page5.$$eval('.sphere-box canvas', (els) => els.length);
+  if (sweepPanels !== 2) problems.push(`sweep: expected 2 sphere canvases, got ${sweepPanels}`);
+  const knobStats = await page5.$eval('#stats', (el) => el.textContent);
+  if (!/showing dt = 0.05/.test(knobStats)) {
+    problems.push(`sweep: stats not showing dt = 0.05: ${knobStats}`);
+  }
+  // A missing value under the knob is a gap: gray surfaces, nothing 'showing'.
+  await page5.$eval('#knob', (el) => {
+    el.value = '0';
+    el.dispatchEvent(new Event('input'));
+  });
+  const gapStats = await page5.$eval('#stats', (el) => el.textContent);
+  if (/showing/.test(gapStats)) problems.push(`sweep: a gap should not be 'showing': ${gapStats}`);
+  await page5.click('#compute');
+  await page5.waitForFunction(
+    () => /all 3 values|failed|stopped/.test(
+      document.getElementById('status')?.textContent ?? '') ||
+      (document.getElementById('err')?.textContent?.length ?? 0) > 4,
+    { timeout: 600_000 },
+  );
+  const s6b = await statusOf(page5);
+  console.log('pass 6 after compute:', s6b);
+  const e6 = await errOf(page5);
+  if (e6) problems.push(`sweep: err: ${e6}`);
+  if (!/all 3 values.*computed here/.test(s6b)) {
+    problems.push(`sweep: unexpected status after compute: ${s6b}`);
+  }
+  const loadedTicks2 = await page5.$$eval('.tick.cached', (els) => els.length);
+  if (loadedTicks2 !== 3) problems.push(`sweep: expected 3 loaded ticks, got ${loadedTicks2}`);
+  if (!(await page5.$eval('#compute', (b) => b.disabled))) {
+    problems.push('sweep: Compute missing values still enabled with nothing missing');
+  }
+  // The knob followed the walk to dt = 0.1; step it back across the sweep.
+  const doneStats = await page5.$eval('#stats', (el) => el.textContent);
+  if (!/showing dt = 0.1/.test(doneStats)) {
+    problems.push(`sweep: stats after compute: ${doneStats}`);
+  }
+  await page5.$eval('#knob', (el) => {
+    el.value = '0';
+    el.dispatchEvent(new Event('input'));
+  });
+  const backStats = await page5.$eval('#stats', (el) => el.textContent);
+  if (!/showing dt = 0.02/.test(backStats)) {
+    problems.push(`sweep: knob to dt = 0.02: ${backStats}`);
+  }
+  if (!new URL(page5.url()).hash.includes('sweep=dt')) {
+    problems.push(`sweep: sweep key not in URL: ${page5.url()}`);
+  }
+  // A typed value list replaces the offered one: two values here, one of them
+  // (0.05) the file already in the "cache" and the other never computed. The
+  // list travels in the URL with literal commas.
+  await page5.$eval('#values', (el) => {
+    el.value = '0.05, 0.2';
+    el.dispatchEvent(new Event('change'));
+  });
+  await page5.waitForFunction(
+    () => /1 of 2 values|failed/.test(document.getElementById('status')?.textContent ?? '') ||
+      (document.getElementById('err')?.textContent?.length ?? 0) > 4,
+    { timeout: 600_000 },
+  );
+  const customTicks = await page5.$$eval('.tick', (els) => els.map((e) => e.textContent));
+  if (customTicks.join('|') !== '0.05|0.2') {
+    problems.push(`sweep: custom ticks ${customTicks.join('|')}, expected 0.05|0.2`);
+  }
+  const customCached = await page5.$$eval('.tick.cached', (els) => els.length);
+  if (customCached !== 1) problems.push(`sweep: expected 1 cached custom tick, got ${customCached}`);
+  const customHash = new URL(page5.url()).hash;
+  if (!customHash.includes('values=0.05,0.2')) {
+    problems.push(`sweep: custom values not literal in URL: ${customHash}`);
+  }
+  console.log('pass 6 custom list:', await statusOf(page5));
+  await page5.close();
+
 } catch (e) {
   problems.push(`fatal: ${e.message}`);
 } finally {

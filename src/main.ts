@@ -45,13 +45,19 @@ import {
   T_END_CHOICE,
   LMAX,
   NITER,
-  LAM3,
   AUTO_DT,
   defaultChoiceParams,
   fmtChoice,
   type DiscreteChoice,
 } from './cache/options.ts';
-import { stepsFor, type CacheSpec, APP_NAME, FORMAT_VERSION } from './cache/spec.ts';
+import { stepsFor, type CacheSpec, APP_NAME } from './cache/spec.ts';
+import {
+  fragmentFor,
+  readSelection,
+  selectionToParams,
+  specForSelection,
+  type Selection,
+} from './cache/selection.ts';
 import { lookupFor, fetchCached, headCached, type CacheLookup } from './cache/client.ts';
 import { autoOrder, specForTarget, type AutoTarget } from './cache/autoWalk.ts';
 import { decodeCacheFile } from './cache/h5file.ts';
@@ -87,6 +93,7 @@ const elCliCmd = $('clicmd');
 const elCliCopy = $<HTMLButtonElement>('clicopy');
 const elCliCopied = $('clicopied');
 const elCliHelp = $('clihelp');
+const elSweepLink = $<HTMLAnchorElement>('sweeplink');
 const elErr = $('err');
 
 /**
@@ -174,20 +181,19 @@ let downloadUrl: string | null = null;
 const nextFrame = () => new Promise<number>(requestAnimationFrame);
 
 // ---------------------------------------------------------------- spec
-function currentSpec(): CacheSpec {
+function currentSelection(): Selection {
   return {
-    app: APP_NAME,
-    formatVersion: FORMAT_VERSION,
     model: model.key,
     params: { ...params },
     geometry: geometry.key,
     geometryParams: { ...geomParams },
-    lmax: LMAX,
-    niter: NITER,
-    lam3: LAM3,
     seed,
     tEnd,
   };
+}
+
+function currentSpec(): CacheSpec {
+  return specForSelection(currentSelection());
 }
 
 // ---------------------------------------------------------------- URL state
@@ -195,47 +201,28 @@ function currentSpec(): CacheSpec {
  * The selection lives in the URL fragment, every value written explicitly
  * (`#a=0.1&b=0.9&…&geometry=ellipsoid&ax=1.5&…&seed=1&tend=100`), so a link
  * keeps meaning the same spec even if a default changes later. The fragment
- * is chosen over the query string to leave `?tend` to the test hook. Values
- * are only accepted if they are exactly entries of the discrete lists;
- * anything else keeps the default.
+ * is chosen over the query string to leave `?tend` to the test hook. The
+ * serialization is shared with the sweep page and the command line
+ * (src/cache/selection.ts).
  */
 function readUrlState(): void {
   const hash = location.hash.replace(/^#/, '');
   if (!hash) return;
-  const p = new URLSearchParams(hash);
-  // `name` is the key as it appears in the URL; it defaults to the choice's
-  // own key but is passed explicitly where the two differ (tEnd vs tend).
-  const pick = (choice: DiscreteChoice, current: number, name = choice.key): number => {
-    const raw = p.get(name);
-    if (raw === null) return current;
-    const v = Number(raw);
-    return choice.values.includes(v) ? v : current;
-  };
-  const m = p.get('model');
-  if (m && mModelByKey(m) && MODEL_CHOICES[m]) {
-    model = mModelByKey(m)!;
-    params = defaultChoiceParams(MODEL_CHOICES[m]);
-  }
-  const g = p.get('geometry');
-  if (g && mGeometryByKey(g) && GEOMETRY_CHOICES[g]) {
-    geometry = mGeometryByKey(g)!;
-    geomParams = defaultChoiceParams(GEOMETRY_CHOICES[g]);
-  }
-  for (const c of MODEL_CHOICES[model.key]) params[c.key] = pick(c, params[c.key]);
-  for (const c of GEOMETRY_CHOICES[geometry.key]) geomParams[c.key] = pick(c, geomParams[c.key]);
-  seed = pick(SEED_CHOICE, seed);
-  tEnd = pick(T_END_CHOICE, tEnd, 'tend');
+  const sel = readSelection(new URLSearchParams(hash));
+  model = mModelByKey(sel.model)!;
+  params = sel.params;
+  geometry = mGeometryByKey(sel.geometry)!;
+  geomParams = sel.geometryParams;
+  seed = sel.seed;
+  tEnd = sel.tEnd;
 }
 
 function writeUrlState(): void {
-  const p = new URLSearchParams();
-  p.set('model', model.key);
-  for (const c of MODEL_CHOICES[model.key]) p.set(c.key, fmtChoice(params[c.key]));
-  p.set('geometry', geometry.key);
-  for (const c of GEOMETRY_CHOICES[geometry.key]) p.set(c.key, fmtChoice(geomParams[c.key]));
-  p.set('seed', String(seed));
-  p.set('tend', fmtChoice(tEnd));
-  history.replaceState(null, '', `${location.pathname}${location.search}#${p.toString()}`);
+  const p = fragmentFor(selectionToParams(currentSelection()));
+  history.replaceState(null, '', `${location.pathname}${location.search}#${p}`);
+  // The sweep page opens on the same selection (the search part keeps the
+  // ?tend test hook alive across the two pages).
+  elSweepLink.href = `sweep.html${location.search}#${p}`;
 }
 
 // ---------------------------------------------------------------- controls

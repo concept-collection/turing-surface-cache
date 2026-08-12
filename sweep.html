@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%232a5f7f%22/><circle cx=%2235%22 cy=%2238%22 r=%2211%22 fill=%22%23f5d547%22/><circle cx=%2265%22 cy=%2258%22 r=%229%22 fill=%22%23f5d547%22/><circle cx=%2248%22 cy=%2274%22 r=%227%22 fill=%22%23f5d547%22/><circle cx=%2268%22 cy=%2230%22 r=%226%22 fill=%22%23f5d547%22/></svg>" />
+    <title>turing-surface-cache — parameter sweep</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>turing-surface-cache — parameter sweep</h1>
+      <p class="sub">
+        One model parameter runs over a list of values while everything else
+        stays fixed; the knob steps the display through the range. The list
+        starts as the values the single-solution page offers, and any numbers
+        may be typed in its place. Values already in the shared cloud cache are
+        loaded up front, so dragging the knob is instant; values nobody has
+        computed show as gaps until <b>Compute missing values</b> runs them
+        here, or the command below runs them on another machine. One color
+        scale covers the whole sweep, so differences between values are real.
+        Back to the <a id="backlink" href="index.html">single-solution
+        page</a>.
+      </p>
+      <div class="controls">
+        <label title="The reaction-diffusion system being solved">model
+          <select id="model"></select>
+        </label>
+        <label title="Which parameter the knob runs over">sweep over
+          <select id="sweepover"></select>
+        </label>
+        <label title="The values the knob runs over, separated by commas. Any numbers may be given, not only the ones the single-solution page offers; each still names one exact cache entry. Empty means the offered list.">values
+          <input id="values" type="text" size="26" autocomplete="off"
+            placeholder="e.g. 0.7, 0.9, 1.1, 1.3" />
+        </label>
+        <span id="valuesnote"></span>
+      </div>
+      <div class="controls">
+        <span id="params" class="controls" style="padding: 0"></span>
+      </div>
+      <div class="controls">
+        <label title="The surface the pattern is solved on">geometry
+          <select id="geometry"></select>
+        </label>
+        <span id="geomparams" class="controls" style="padding: 0"></span>
+        <label title="Which random initial perturbation to start from">seed
+          <select id="seed"></select>
+        </label>
+        <label title="Every solution of the sweep is reported at this simulation time">end time
+          <select id="tend"></select>
+        </label>
+        <button id="compute" class="primary"
+          title="Compute the sweep's uncached values in your browser, one after another">Compute missing values</button>
+        <button id="stop" hidden>Stop</button>
+        <button id="reset" title="Set every selection back to its default">Reset to defaults</button>
+      </div>
+      <div class="sweepbar">
+        <div class="knobtrack">
+          <input type="range" id="knob" min="0" max="1" step="1" value="0" />
+          <div class="ticks" id="ticks"></div>
+        </div>
+        <span id="knobval"></span>
+      </div>
+      <p id="status"></p>
+      <div id="panels"></div>
+      <div class="controls">
+        <button id="resetview">Reset view</button>
+      </div>
+      <p class="stats" id="stats"></p>
+      <div class="cloud">
+        <span>Solutions computed here can be contributed back to the shared
+          cache, so the next visitor gets the whole sweep instantly.
+          Contributing requires an upload API key.</span>
+        <div class="controls">
+          <label>upload API key
+            <input id="apikey" type="password" autocomplete="off" placeholder="(optional)" />
+          </label>
+          <span id="uploadnote"></span>
+        </div>
+        <div class="controls" id="clibar" hidden>
+          <span>fill this sweep from a machine with no browser on it:</span>
+          <code id="clicmd"></code>
+          <button id="clicopy"
+            title="Copies the command with your key in it. The key is masked here so that it stays out of screenshots.">Copy command (includes your key)</button>
+          <span id="clicopied"></span>
+        </div>
+        <p id="clinote" hidden>If the command does not run on the other
+          machine, the notes on the
+          <a href="index.html">single-solution page</a> cover the common
+          failures.</p>
+      </div>
+      <p id="err"></p>
+    </main>
+    <script type="module" src="/src/sweep.ts"></script>
+  </body>
+</html>
