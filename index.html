@@ -108,7 +108,12 @@ printf '#!/bin/sh\nexec %s --library-path %s %s "$@"\n' \
   $U/usr/local/bin/node > ~/turing-bin/node
 chmod +x ~/turing-bin/node
 
-# 3. run the command above, with that node found first
+# 3. and the borrowed npx, which is a script rather than part of node
+printf '#!/bin/sh\nexec ~/turing-bin/node %s "$@"\n' \
+  $U/usr/local/lib/node_modules/npm/bin/npx-cli.js > ~/turing-bin/npx
+chmod +x ~/turing-bin/npx
+
+# 4. run the command above, with those found first
 export PATH=~/turing-bin:$PATH</pre>
           <p>The host's own <code>/usr/lib64</code> stays last on that library
             path, and is where the NVIDIA libraries and the Vulkan loader come
@@ -117,6 +122,13 @@ export PATH=~/turing-bin:$PATH</pre>
             unpack the image, which
             <code>--root /tmp/$USER/store --runroot /tmp/$USER/run</code> on each
             podman command works around.</p>
+          <p>Note that <code>npx</code> has to be borrowed as well as
+            <code>node</code>. It is not part of node but a script beside it,
+            so a machine whose own node is too old has an <code>npx</code> too
+            old to go with it, and putting only a node on the path leaves that
+            old one to be found. Its symptoms are its own rather than the
+            version error above, since it is a different program from the npx
+            of any current node.</p>
           <p><code>WebGPU is not available</code>, or no adapter at all, means
             there is no GPU to reach: Dawn goes through Vulkan on Linux and Metal
             on macOS, so a machine without a GPU, or with one whose driver is not

@@ -195,7 +195,10 @@ What does work is to borrow only the userland from a container image and run
 node through its loader, on the host, leaving the GPU, `/dev` and `/proc`
 exactly as they were; the host's own `/usr/lib64` stays last on the library
 path, since the NVIDIA libraries and the Vulkan loader have to match the
-running kernel module. The page carries that recipe, folded away beside the
+running kernel module. Note that `npx` must be borrowed along with `node`,
+being a script beside node rather than a part of it: a machine whose node is
+too old has an equally old npx, and a path carrying only the borrowed node
+still finds that one. The page carries that recipe, folded away beside the
 command it belongs to, along with what the other common failures mean —
 they are worth writing down where someone will meet them, since none of them
 is guessable from the error alone.
